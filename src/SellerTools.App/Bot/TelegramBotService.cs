@@ -126,7 +126,11 @@ public class TelegramBotService : IHostedService, IUpdateHandler
             return;
         }
 
-        if (text.StartsWith("/report", StringComparison.OrdinalIgnoreCase))
+        // /report или кнопка «📊 Отчёт» из меню.
+        if (text.StartsWith("/report", StringComparison.OrdinalIgnoreCase)
+            || text == Loc.T("bot.menu.report", state.Language)
+            || text == Loc.T("bot.menu.report", "ru")
+            || text == Loc.T("bot.menu.report", "uz"))
         {
             await OnReportAsync(bot, chatId, userId, state.Language, ct);
             return;
@@ -309,27 +313,62 @@ public class TelegramBotService : IHostedService, IUpdateHandler
 
         var label = string.IsNullOrWhiteSpace(shopName) ? shopId.ToString() : $"{shopName} ({shopId})";
         await bot.SendMessage(chatId,
-            string.Format(Loc.T("bot.bindOk", lang), label), cancellationToken: ct);
+            string.Format(Loc.T("bot.bindOk", lang), label),
+            replyMarkup: MainMenu(lang), cancellationToken: ct);
     }
+
+    /// <summary>Постоянное меню с кнопкой «Отчёт» (показываем после привязки).</summary>
+    private static ReplyKeyboardMarkup MainMenu(string lang) =>
+        new(new[] { new KeyboardButton(Loc.T("bot.menu.report", lang)) })
+        {
+            ResizeKeyboard = true,
+        };
 
     private async Task OnReportAsync(
         ITelegramBotClient bot, long chatId, long userId, string lang, CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
         var sellers = scope.ServiceProvider.GetRequiredService<SellerService>();
-        var shops = await sellers.GetShopsAsync(userId, ct);
+        var reportSvc = scope.ServiceProvider.GetRequiredService<LossReportService>();
+        var syncSvc = scope.ServiceProvider.GetRequiredService<ShopSyncService>();
 
+        var shops = await sellers.GetShopsAsync(userId, ct);
         if (shops.Count == 0)
         {
             await bot.SendMessage(chatId, Loc.T("bot.report.noShopYet", lang), cancellationToken: ct);
             return;
         }
 
-        // Полноценный отчёт красиво в боте — В5. Здесь подтверждаем, что магазин на связи.
-        await bot.SendMessage(chatId, Loc.T("bot.report.building", lang), cancellationToken: ct);
-        await bot.SendMessage(chatId,
-            $"🛠 Магазин {shops[0].Id} подключён. Формирование отчёта в боте появится в следующем обновлении.",
-            cancellationToken: ct);
+        // Пока один магазин на селлера; берём первый.
+        var shop = shops[0];
+
+        // Отчёт из последнего снапшота; если снапшота ещё нет — синкаем немедленно.
+        var report = await reportSvc.BuildFromSnapshotAsync(shop.Id, shop.Title, ct: ct);
+        if (report is null)
+        {
+            await bot.SendMessage(chatId, Loc.T("bot.report.building", lang), cancellationToken: ct);
+
+            var sync = await syncSvc.SyncShopAsync(shop, ct);
+            if (!sync.Ok)
+            {
+                await bot.SendMessage(chatId,
+                    string.Format(Loc.T("bot.report.syncFailed", lang), sync.Error),
+                    cancellationToken: ct);
+                return;
+            }
+
+            report = await reportSvc.BuildFromSnapshotAsync(shop.Id, shop.Title, ct: ct);
+            if (report is null)
+            {
+                await bot.SendMessage(chatId,
+                    string.Format(Loc.T("bot.report.syncFailed", lang), "нет данных"),
+                    cancellationToken: ct);
+                return;
+            }
+        }
+
+        await bot.SendMessage(chatId, BotReportRenderer.Render(report, lang),
+            parseMode: ParseMode.Markdown, replyMarkup: MainMenu(lang), cancellationToken: ct);
     }
 
     /// <summary>Маппинг исхода проверки ключа → дружелюбный текст.</summary>

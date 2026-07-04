@@ -38,4 +38,13 @@ public class UzumApiOptions
 
     /// <summary>Размер страницы при постраничном обходе товаров.</summary>
     public int PageSize { get; set; } = 100;
+
+    /// <summary>
+    /// Порог остатка дневного лимита (доля от 0 до 1), ниже которого синк делает
+    /// паузу между страницами и пишет предупреждение. По умолчанию 10%.
+    /// </summary>
+    public double RateLimitPauseThreshold { get; set; } = 0.10;
+
+    /// <summary>Длительность паузы (мс) при низком остатке дневного лимита.</summary>
+    public int RateLimitPauseMs { get; set; } = 60_000;
 }

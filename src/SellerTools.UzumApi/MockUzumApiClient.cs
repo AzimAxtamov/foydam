@@ -56,6 +56,33 @@ public class MockUzumApiClient : IUzumApiClient
 
     public Task<IReadOnlyList<ProductDto>> GetAllProductsAsync(
         long shopId, string apiKey, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<ProductDto>>(BuildAllProducts());
+
+    // Синтетические rate-limit заголовки для страниц (как у реального API).
+    private static Dictionary<string, string> MockRateLimitHeaders(long remainingPerDay) => new()
+    {
+        ["x-ratelimit-remaining"] = "999",
+        ["x-ratelimit-replenish-rate"] = "10",
+        ["x-ratelimit-burst-capacity"] = "20",
+        ["x-ratelimit-requested-tokens"] = "1",
+        ["x-ratelimit-limit-per-day"] = "100000",
+        ["x-ratelimit-remaining-per-day"] = remainingPerDay.ToString(),
+    };
+
+    public Task<ProductsPage> GetProductsPageAsync(
+        long shopId, string apiKey, int page, int size, CancellationToken ct = default)
+    {
+        var all = BuildAllProducts();
+        var slice = all.Skip(page * size).Take(size).ToList();
+        return Task.FromResult(new ProductsPage
+        {
+            Products = slice,
+            IsLast = slice.Count < size,
+            RateLimitHeaders = MockRateLimitHeaders(99500 - page),
+        });
+    }
+
+    private static List<ProductDto> BuildAllProducts()
     {
         var rnd = new Random(Seed);
         var products = new List<ProductDto>(Catalog.Length);
@@ -121,7 +148,7 @@ public class MockUzumApiClient : IUzumApiClient
             });
         }
 
-        return Task.FromResult<IReadOnlyList<ProductDto>>(products);
+        return products;
     }
 
     public Task<ProbeResult> ProbeAsync(

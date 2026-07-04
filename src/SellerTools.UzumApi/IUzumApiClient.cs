@@ -26,6 +26,17 @@ public interface IUzumApiClient
         CancellationToken ct = default);
 
     /// <summary>
+    /// Одна страница товаров + rate-limit заголовки. Для синка: даёт синку
+    /// решать между страницами, паузиться ли по остатку лимита.
+    /// </summary>
+    Task<ProductsPage> GetProductsPageAsync(
+        long shopId,
+        string apiKey,
+        int page,
+        int size,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Диагностика: одиночный сырой GET к эндпоинту. Возвращает статус,
     /// rate-limit заголовки и начало тела. Не ретраит, не бросает исключения —
     /// сетевые ошибки кладёт в ProbeResult.Error. Нужно для проверки живым ключом

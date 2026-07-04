@@ -5,6 +5,11 @@
     <UserSecretsId>sellertools-app</UserSecretsId>
   </PropertyGroup>
 
+  <!-- ASP.NET Core нужен для дашборда Hangfire (WebApplication) -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- Хост, конфиг, DI -->
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.*" />
@@ -13,6 +18,10 @@
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.*" />
     <!-- Telegram-бот (long polling) -->
     <PackageReference Include="Telegram.Bot" Version="22.*" />
+    <!-- Фоновые джобы: ночной синк снапшотов -->
+    <PackageReference Include="Hangfire.Core" Version="1.8.*" />
+    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.*" />
+    <PackageReference Include="Hangfire.PostgreSql" Version="1.21.*" />
   </ItemGroup>
 
   <ItemGroup>

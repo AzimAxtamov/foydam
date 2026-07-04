@@ -62,20 +62,30 @@ public class RealUzumApiClient : IUzumApiClient
 
         while (true)
         {
-            var url = $"/v1/product/shop/{shopId}?filter=ALL&size={_options.PageSize}&page={page}";
-            var resp = await SendWithRetryAsync(url, apiKey, ct);
-            var body = await resp.Content.ReadFromJsonAsync<ProductShopResponse>(ct)
-                       ?? new ProductShopResponse();
-
-            all.AddRange(body.ProductList);
-
-            // Пагинация: пока страница полная — идём дальше.
-            if (body.ProductList.Count < _options.PageSize)
+            var result = await GetProductsPageAsync(shopId, apiKey, page, _options.PageSize, ct);
+            all.AddRange(result.Products);
+            if (result.IsLast)
                 break;
             page++;
         }
 
         return all;
+    }
+
+    public async Task<ProductsPage> GetProductsPageAsync(
+        long shopId, string apiKey, int page, int size, CancellationToken ct = default)
+    {
+        var url = $"/v1/product/shop/{shopId}?filter=ALL&size={size}&page={page}";
+        using var resp = await SendWithRetryAsync(url, apiKey, ct);
+        var body = await resp.Content.ReadFromJsonAsync<ProductShopResponse>(ct)
+                   ?? new ProductShopResponse();
+
+        return new ProductsPage
+        {
+            Products = body.ProductList,
+            IsLast = body.ProductList.Count < size,
+            RateLimitHeaders = ExtractRateLimitHeaders(resp),
+        };
     }
 
     public async Task<ProbeResult> ProbeAsync(

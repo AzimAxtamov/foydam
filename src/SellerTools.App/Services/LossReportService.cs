@@ -76,6 +76,66 @@ public class LossReportService
     }
 
     /// <summary>
+    /// Дата последнего снапшота магазина (или null, если снапшотов ещё нет).
+    /// </summary>
+    public async Task<DateOnly?> GetLatestSnapshotDateAsync(long shopId, CancellationToken ct = default)
+    {
+        var dates = await _db.SkuDailySnapshots
+            .Where(x => x.ShopId == shopId)
+            .Select(x => x.Date)
+            .ToListAsync(ct);
+        return dates.Count == 0 ? null : dates.Max();
+    }
+
+    /// <summary>
+    /// Строит отчёт потеряшек из СНАПШОТА (последнего или за указанную дату),
+    /// без обращения к API. Возвращает null, если снапшотов ещё нет.
+    /// </summary>
+    public async Task<LossReport?> BuildFromSnapshotAsync(
+        long shopId, string? shopTitle = null, DateOnly? date = null, CancellationToken ct = default)
+    {
+        date ??= await GetLatestSnapshotDateAsync(shopId, ct);
+        if (date is null)
+            return null;
+
+        var snaps = await _db.SkuDailySnapshots
+            .Where(x => x.ShopId == shopId && x.Date == date)
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        var report = new LossReport
+        {
+            ShopId = shopId,
+            ShopTitle = shopTitle,
+            Date = date.Value,
+            TotalSkusScanned = snaps.Count,
+        };
+
+        foreach (var s in snaps)
+        {
+            if (s.QuantityMissing + s.QuantityDefected <= 0)
+                continue;
+
+            report.Rows.Add(new LossReportRow
+            {
+                SkuId = s.SkuId,
+                SkuTitle = s.SkuTitle ?? "",
+                ProductTitle = s.ProductTitle ?? "",
+                Missing = s.QuantityMissing,
+                Defected = s.QuantityDefected,
+                Price = s.Price,
+                PurchasePrice = s.PurchasePrice,
+            });
+        }
+
+        report.Rows = report.Rows
+            .OrderByDescending(r => r.EstimateBySalePrice)
+            .ToList();
+
+        return report;
+    }
+
+    /// <summary>
     /// Upsert снапшотов за дату по уникальному индексу (ShopId, Date, SkuId).
     /// </summary>
     private async Task PersistSnapshotsAsync(
