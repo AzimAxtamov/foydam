@@ -49,9 +49,7 @@ dotnet run --project src/SellerTools.App
 | `MaxRetries` / `RetryBaseDelayMs` | ретраи 429/5xx с бэкоффом |
 | `PageSize` | размер страницы при обходе товаров |
 
-Строка подключения к БД — `ConnectionStrings:Postgres`. Контейнер Postgres
-проброшен на хост-порт **5433** (чтобы не конфликтовать с локально установленным
-Postgres на 5432).
+Строка подключения к БД — `ConnectionStrings:Postgres` (по умолчанию порт 5432).
 
 ## Безопасность
 

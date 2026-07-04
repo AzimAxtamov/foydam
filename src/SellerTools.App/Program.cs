@@ -21,7 +21,7 @@ builder.Services.AddUzumApi(builder.Configuration);
 
 // EF Core + PostgreSQL.
 var conn = builder.Configuration["ConnectionStrings:Postgres"]
-           ?? "Host=localhost;Port=5433;Database=sellertools;Username=sellertools;Password=sellertools";
+           ?? "Host=localhost;Port=5432;Database=sellertools;Username=sellertools;Password=sellertools";
 builder.Services.AddDbContext<AppDbContext>(o => o.UseNpgsql(conn));
 
 // Сервисы.
