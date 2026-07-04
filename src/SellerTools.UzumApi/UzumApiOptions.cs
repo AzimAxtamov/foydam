@@ -19,14 +19,16 @@ public class UzumApiOptions
     public string BaseUrl { get; set; } = "https://api-seller.uzum.uz";
 
     /// <summary>
-    /// Имя auth-заголовка. НЕ ПОДТВЕРЖДЕНО — дефолт Authorization.
+    /// Имя auth-заголовка. Подтверждено спекой (securitySchemes.TokenAuth): Authorization.
     /// </summary>
     public string AuthHeaderName { get; set; } = "Authorization";
 
     /// <summary>
-    /// Схема auth. Дефолт "Bearer". Пустая строка = сырое значение ключа в заголовке.
+    /// Схема auth. По спеке — «Токен авторизации без префикса Bearer», поэтому
+    /// дефолт ПУСТОЙ (сырое значение ключа в заголовке). Прежний "Bearer" давал 403.
+    /// Конфигурируемо на случай, если живой ключ покажет иное.
     /// </summary>
-    public string AuthScheme { get; set; } = "Bearer";
+    public string AuthScheme { get; set; } = "";
 
     /// <summary>Кол-во ретраев при 429/5xx.</summary>
     public int MaxRetries { get; set; } = 4;

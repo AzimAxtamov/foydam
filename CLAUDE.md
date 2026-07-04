@@ -39,13 +39,31 @@ Telegram-бот для селлеров маркетплейса Uzum Market (У
 
 ## Официальный Seller API — вся добытая информация
 
-- База: `https://api-seller.uzum.uz`
+> Полная спецификация лежит в репозитории: `uzum-openapi.json` (OpenAPI 3.0.0,
+> 35 путей, 107 схем). Разобрана вечером анализа спеки — находки ниже помечены **[SPEC]**.
+
+- База хоста: `https://api-seller.uzum.uz`
+- **[SPEC] Server URL из спеки: `https://api-seller.uzum.uz/api/seller-openapi/`** —
+  то есть канонический полный путь = `…/api/seller-openapi/` + `v1/product/…`.
+  НО: живой прогон `diag` по `https://api-seller.uzum.uz/v1/product/shop/{id}`
+  (без `/api/seller-openapi`) вернул `403 RBAC: access denied`, а не `404` —
+  значит запрос дошёл до слоя авторизации и роутинг сработал. Вероятно, шлюз
+  принимает оба варианта. **Проверить живым валидным ключом**, какой префикс
+  реально нужен; безопаснее выставить базу клиента с `/api/seller-openapi/`.
 - Swagger UI: `https://api-seller.uzum.uz/api/seller-openapi/swagger/swagger-ui/webjars/swagger-ui/index.html`
 - Ключ создаётся в ЛК селлера **на конкретный магазин**, права: «Только чтение» /
   «Редактирование», срок: от 1 месяца до бессрочного.
-- **Имя auth-заголовка НЕ ПОДТВЕРЖДЕНО.** Дефолт: `Authorization: Bearer <key>`.
-  Сделать конфигурируемым (`UzumApi:AuthHeaderName`, `UzumApi:AuthScheme`;
-  пустая схема = сырое значение ключа в заголовке).
+- **[SPEC] Авторизация ПОДТВЕРЖДЕНА (закрыт вопрос №1).** `securitySchemes.TokenAuth`:
+  `type: apiKey`, `in: header`, `name: Authorization`,
+  описание — **«Токен авторизации без префикса Bearer»**. Значит правильно:
+  заголовок `Authorization: <сырой ключ>`, **БЕЗ схемы `Bearer`**.
+  → **Уже исправлено в коде:** дефолт `UzumApi:AuthScheme=""` (пустая схема =
+  сырое значение ключа), `AuthHeaderName=Authorization`; в appsettings тоже `""`.
+  Глобальный `security: [{ TokenAuth: [] }]` — применяется ко всем эндпоинтам.
+  ⚠️ Оговорка: живой `diag` с **невалидным** ключом даёт `403 RBAC: access denied`
+  и с `Bearer`, и с пустой схемой (RBAC режет любой мусорный ключ до разбора
+  формата), поэтому живьём эти два варианта неразличимы — источник истины здесь
+  спека. Окончательно подтвердить пустую схему **валидным** ключом (вечер №2).
 
 ### Эндпоинты (подтверждены в swagger)
 
@@ -166,8 +184,102 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 ```
 
 **GET `/v3/fbs/sku/stocks`** — остатки FBS постранично (v2 deprecated).
+Ответ: `GenericResponseSellerFbsSkuStockUpdateDtoV2` (envelope с `payload`).
+Элемент остатка `RestSellerSkuFbsAmountDto`: `skuId(int64)`, `skuTitle`,
+`productTitle`, `barcode(string!)`, `amount(int32)`, `fbsLinked`, `dbsLinked`.
 **POST `/v2/fbs/sku/stocks`** — обновление остатков (write, НЕ использовать в Фазе 0).
 **POST `/v1/product/{shopId}/sendPriceData`** — изменение цен (write, Фаза 2).
+
+### [SPEC] Полный список эндпоинтов (35; из uzum-openapi.json)
+
+Помечены: **NEW** — не было в CLAUDE.md; ⭐ — потенциально полезно для Фаз 0/1.
+Все — под глобальным `TokenAuth`. Пути даны без server-префикса `/api/seller-openapi/`.
+
+**Shop** ⭐
+- `GET /v1/shops` — **NEW ⭐** список своих магазинов → `[{id,name}]` (закрывает вопрос №2).
+
+**Product**
+- `GET /v1/product/shop/{shopId}` — SKU магазина (уже используем) → `AllProducts`.
+- `GET /v1/product/barcodes/types` — **NEW** справочник размеров этикеток → `BarcodeTypes`.
+- `POST /v1/product/shop/{shopId}/barcodes/print` — **NEW** печать этикеток SKU (write).
+- `POST /v1/product/{shopId}/sendPriceData` — изменение цен (write, Фаза 2).
+
+**Finance** ⭐
+- `GET /v1/finance/orders` — позиции заказов → `FinanceOrderItemsDto`.
+- `GET /v1/finance/expenses` — расходы → `GenericResponseSellerPaymentInfoDtoList`.
+
+**Stocks**
+- `GET /v3/fbs/sku/stocks` — остатки FBS (постранично).
+- `GET /v2/fbs/sku/stocks` — **DEPRECATED**.
+- `POST /v2/fbs/sku/stocks` — обновление остатков (write).
+
+**Return Invoice** ⭐ (пригодится для Фазы 1 — алерты по возвратам)
+- `GET /v1/return` — **NEW ⭐** возвраты продавца → `array<SellerReturnDto>`.
+- `GET /v1/shop/{shopId}/return` — **NEW** накладные возврата → `SellerReturnLite`.
+- `GET /v1/shop/{shopId}/return/{returnId}` — **NEW** состав накладной возврата.
+
+**FBO Invoice** (накладные поставки на склад Uzum)
+- `GET /v1/invoice` — **NEW** список накладных → `array<InvoiceWithSkuListDto>`.
+- `GET /v1/shop/{shopId}/invoice` — **NEW** накладные поставки по магазину.
+- `GET /v1/shop/{shopId}/invoice/products` — **NEW** состав накладной.
+
+**FBS Invoice** (накладные отгрузки FBS; много — все NEW, для Фазы 0 не нужны)
+- `GET/POST /v1/fbs/invoice`, `GET /v1/fbs/invoice/{invoiceId}`,
+  `POST …/cancel`, `GET …/orders`, `GET …/print`, `GET …/closing-documents`,
+  `POST …/update-content`, плюс `…/dop/drop-off-points`, `…/dop/time-slot`.
+
+**Работа с заказами FBS/DBS** (все NEW; для Фазы 0 не нужны — это операционка)
+- `GET /v2/fbs/orders` — заказы продавца (пагинация, `dateFrom/dateTo` int64).
+- `GET /v2/fbs/orders/count` — количество заказов.
+- `GET /v1/fbs/order/{orderId}`, `GET /v1/fbs/order/return-reasons`,
+  `POST …/confirm`, `…/cancel`, `…/identifier`, `GET …/labels/print` (write/операции).
+- DBS: `POST /v1/dbs/order/{orderId}/completed | /delivering | /refund`.
+
+### [SPEC] Сверка наших DTO с реальными схемами
+
+Реальные имена схем (не совпадают с нашими типами, но по JSON — та же форма):
+- Ответ товаров — **`AllProducts`** = `{ productList: SellerProductCard[],
+  totalProductsAmount: int32 }`. Наш `ProductShopResponse` — форма совпадает.
+- Карточка товара — **`SellerProductCard`** (наш `ProductDto`). Есть `commission(double)`
+  и `commissionDto: Commission {minCommission, maxCommission — оба double}`.
+- SKU — **`SkuForTable`** (наш `SkuDto`). Форма совпадает.
+
+⚠️ **Несоответствия типов (исправить в наших DTO, В2):**
+- `SkuDto.Commission` у нас `long` → в спеке **`double`**. Также `double`:
+  `returnedPercentage`, `turnover`, `avgdsales`, `avgdquantity` (у нас double —
+  ок), `commission` на уровне карточки. **Комиссию хранить как double, не long.**
+- Деньги-поля SKU (`price`, `purchasePrice`, `paidStoragePriceItem`,
+  `paidStorageAmount`) — **`int64`** → наш `long` верен.
+- `barcode` — `int64` в SKU (наш `long` ✓), но `int64` НЕ везде: в
+  `RestSellerSkuFbsAmountDto.barcode` — **`string`**. Не путать.
+- `SellerOrderItemDto.cancelled` — **`int64` (количество отмен)**, не bool.
+- Enum'ы статусов (для справки):
+  `ProductStatus.value` = NO_SKU | IN_STOCK | READY_TO_SEND | SENT | RUN_OUT |
+  BLOCKED | SKU_BLOCKED | ARCHIVED | DELETED | PERM_BANNED | NOT_READY_TO_SEND;
+  `ProductModerationStatus.value` = NOT_MODERATED | MODERATED | ON_MODERATION |
+  HAS_COMPLAINTS | ON_PREMODERATION | PERM_BANNED;
+  `SellerPaymentDto.status` = CREATED | REFUNDED | CONFIRMED | CANCELED;
+  `SellerPaymentDto.type` = OUTCOME | INCOME;
+  `SellerReturnDto.type` = DEFECTED | RETURN | FBS.
+
+### [SPEC] Финансовые схемы (детали для Фазы 1)
+
+- `FinanceOrderItemsDto` = `{ orderItems: FinanceItemEntity[], totalElements: int32 }`.
+  `group=false` → элементы **`SellerOrderItemDto`** (наследует `FinanceItemEntity`):
+  `id, status(enum TO_WITHDRAW|PROCESSING|CANCELED|PARTIALLY_CANCELLED),
+  date(int64 millis), dateIssued(int64 millis), orderId, skuTitle, productId,
+  productImage, shopId, sellerPrice(int64), amount(int), amountReturns(int),
+  commission(int64), sellerProfit(int64), purchasePrice(int64),
+  logisticDeliveryFee(int64), cancelled(int64), withdrawnProfit(int64),
+  returnCause, comment, skuCharValue, skuCharTitle, productTitle`.
+  `group=true` → **`ProductGroupedSellerItem`** = `{ productId, shopId, productTitle,
+  items: SkuGroupedSellerItemDto[] }`; в `SkuGroupedSellerItemDto` деньги int64:
+  `sellPrice, purchasePrice, sellerDiscountAmount, sellerProfit, commission,
+  withdrawnProfit, logisticDeliveryFee`, плюс `amount, amountReturns (int)`.
+- `finance/expenses` → **`SellerPaymentDto`**: `id(int64), dateCreated/dateUpdated/
+  dateService(ISO date-time!), name, source, shopId, sellerId,
+  paymentPrice(int64), amount(int32), status(enum), externalId, code, type(enum)`.
+  Обёрнуто в generic-envelope `{ payload:{payments:[…]}, errors[], timestamp, trace, error }`.
 
 ### Rate limits (подтверждены заголовками в swagger)
 
@@ -179,16 +291,26 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 экспоненциальным бэкоффом, проектировать синки инкрементально (dateFrom от
 последнего курсора), не делать полных перекачек без необходимости.
 
-### Неизвестное (проверить живым ключом — вечер №2)
+### Неизвестное (статус после разбора спеки)
 
-1. Имя auth-заголовка (дефолт Authorization: Bearer, конфигурируемо).
-2. Как узнать shopId по ключу (ключ per-shop; возможно есть эндпоинт списка
-   магазинов — поискать в swagger; пока shopId вводится вручную).
-3. Отдаёт ли read-only ключ `finance/*` эндпоинты.
-4. Единицы дат (`dateFrom` int64 — millis?) и формат `date` в ответах.
-5. Единицы денег (сум или тийины) — в коде везде long + TODO.
-6. Реальные значения лимитов.
-7. Глубина истории `finance/orders`.
+1. ✅ **Закрыто [SPEC].** Auth = `Authorization: <ключ>` без `Bearer` (см. выше).
+2. ✅ **Закрыто [SPEC].** shopId по ключу → **`GET /v1/shops`** (без параметров)
+   отдаёт `array<OrganizationDto>` = `[{ id: int64, name: string }]`. Это список
+   всех магазинов, доступных ключу. Больше не надо вводить shopId вручную —
+   в В3/боте можно подтянуть автоматически после проверки ключа.
+3. ⏳ **Частично.** Доступ read-only ключа к `finance/*` спека не гарантирует —
+   проверить живым read-only ключом (`diag` в Real).
+4. ✅ **Закрыто [SPEC], но форматы РАЗНЫЕ по эндпоинтам:**
+   - `finance/orders`: `date`, `dateIssued` — **int64 Unix epoch в миллисекундах**
+     (в описании прямо: «Время в формате Unix Epoch в миллисекундах»). `dateFrom`/
+     `dateTo` — тоже int64 millis.
+   - `finance/expenses`: `dateCreated`/`dateUpdated`/`dateService` — **ISO
+     `string(date-time)`** (не millis!). `dateFrom`/`dateTo` в query — int64.
+   - `/v2/fbs/orders`: `dateFrom`/`dateTo` — int64.
+5. ⏳ **Тип закрыт, единица — нет.** Все деньги = **`integer(int64)`** (наш `long`
+   верен). Сум или тийины — в спеке не сказано, проверить живым ключом.
+6. ⏳ Реальные значения лимитов — только живым ключом.
+7. ⏳ Глубина истории `finance/orders` — только живым ключом.
 
 ## Формулы
 
