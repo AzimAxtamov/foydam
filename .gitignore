@@ -1,0 +1,14 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+
+# Секреты — никогда в git (ключи селлеров, токен бота)
+.env
+appsettings.*.local.json
+secrets.json
+
+# Rider / VS Code
+.idea/
+.vscode/

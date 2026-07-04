@@ -1,0 +1,31 @@
+# Инфраструктура для Фазы 0: Postgres (хранилище снапшотов) + Redis (задел).
+services:
+  postgres:
+    image: postgres:16
+    container_name: sellertools-postgres
+    environment:
+      POSTGRES_USER: sellertools
+      POSTGRES_PASSWORD: sellertools
+      POSTGRES_DB: sellertools
+    ports:
+      # 5433 на хосте — чтобы не конфликтовать с локально установленным Postgres.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sellertools -d sellertools"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: sellertools-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:

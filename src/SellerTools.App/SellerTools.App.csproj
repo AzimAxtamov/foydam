@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <UserSecretsId>sellertools-app</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Хост, конфиг, DI -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.*" />
+    <!-- EF Core + PostgreSQL -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.*" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SellerTools.Core\SellerTools.Core.csproj" />
+    <ProjectReference Include="..\SellerTools.UzumApi\SellerTools.UzumApi.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
