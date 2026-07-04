@@ -1,3 +1,5 @@
+using System.Net;
+using SellerTools.UzumApi.Diagnostics;
 using SellerTools.UzumApi.Dto;
 
 namespace SellerTools.UzumApi;
@@ -109,6 +111,46 @@ public class MockUzumApiClient : IUzumApiClient
         }
 
         return Task.FromResult<IReadOnlyList<ProductDto>>(products);
+    }
+
+    public Task<ProbeResult> ProbeAsync(
+        ProbeEndpoint endpoint, long shopId, string apiKey, CancellationToken ct = default)
+    {
+        // Синтетические rate-limit заголовки — чтобы диагностика работала и в Mock.
+        var headers = new Dictionary<string, string>
+        {
+            ["x-ratelimit-remaining"] = "999",
+            ["x-ratelimit-replenish-rate"] = "10",
+            ["x-ratelimit-burst-capacity"] = "20",
+            ["x-ratelimit-requested-tokens"] = "1",
+            ["x-ratelimit-limit-per-day"] = "100000",
+            ["x-ratelimit-remaining-per-day"] = "99500",
+        };
+
+        var (url, body) = endpoint switch
+        {
+            ProbeEndpoint.Products =>
+                ($"/v1/product/shop/{shopId}?filter=ALL&size=5&page=0",
+                 "{\"productList\":[{\"productId\":900000,\"title\":\"Чойнак «Пахта гул»\",\"skuList\":[{\"skuId\":100000,\"quantityMissing\":0,\"price\":45000,\"ikpu\":\"12345678901234567\"}]}],\"totalProductsAmount\":25}"),
+            ProbeEndpoint.FinanceOrders =>
+                ($"/v1/finance/orders?page=0&size=5&group=false&shopIds={shopId}",
+                 "{\"orderItems\":[{\"id\":1,\"status\":\"TO_WITHDRAW\",\"orderId\":5001,\"sellerPrice\":45000,\"amount\":1,\"commission\":4500}],\"totalElements\":128}"),
+            ProbeEndpoint.FinanceExpenses =>
+                ($"/v1/finance/expenses?page=0&size=5&shopIds={shopId}",
+                 "{\"payload\":{\"payments\":[{\"id\":1,\"source\":\"LOGISTICS\",\"paymentPrice\":12000,\"type\":\"OUTCOME\",\"status\":\"CREATED\"}]},\"errors\":[]}"),
+            _ => throw new ArgumentOutOfRangeException(nameof(endpoint)),
+        };
+
+        return Task.FromResult(new ProbeResult
+        {
+            Endpoint = endpoint,
+            Url = url,
+            Executed = true,
+            StatusCode = HttpStatusCode.OK,
+            RateLimitHeaders = headers,
+            BodyPreview = body,
+            ElapsedMs = 3,
+        });
     }
 
     // ИКПУ — 17-значный код (формат нужен для ЭТТН).

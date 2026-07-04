@@ -4,9 +4,11 @@ obj/
 *.user
 .vs/
 
-# Секреты — никогда в git (ключи селлеров, токен бота)
+# Секреты — никогда в git (ключи селлеров, токен бота, AES-ключ)
 .env
 appsettings.*.local.json
+appsettings.Secrets.json
+appsettings.Local.json
 secrets.json
 
 # Rider / VS Code

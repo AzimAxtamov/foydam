@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using SellerTools.UzumApi.Diagnostics;
 using SellerTools.UzumApi.Dto;
 
 namespace SellerTools.UzumApi;
@@ -66,6 +68,74 @@ public class RealUzumApiClient : IUzumApiClient
         }
 
         return all;
+    }
+
+    public async Task<ProbeResult> ProbeAsync(
+        ProbeEndpoint endpoint, long shopId, string apiKey, CancellationToken ct = default)
+    {
+        var url = BuildProbeUrl(endpoint, shopId);
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            ApplyAuth(req, apiKey);
+
+            // Диагностика: без ретраев, хотим видеть сырую правду.
+            using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            sw.Stop();
+
+            var body = await resp.Content.ReadAsStringAsync(ct);
+
+            return new ProbeResult
+            {
+                Endpoint = endpoint,
+                Url = url,
+                Executed = true,
+                StatusCode = resp.StatusCode,
+                RateLimitHeaders = ExtractRateLimitHeaders(resp),
+                BodyPreview = Preview(body),
+                ElapsedMs = sw.ElapsedMilliseconds,
+            };
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new ProbeResult
+            {
+                Endpoint = endpoint,
+                Url = url,
+                Executed = false,
+                Error = ex.Message,
+                ElapsedMs = sw.ElapsedMilliseconds,
+            };
+        }
+    }
+
+    private string BuildProbeUrl(ProbeEndpoint endpoint, long shopId) => endpoint switch
+    {
+        ProbeEndpoint.Products => $"/v1/product/shop/{shopId}?filter=ALL&size=5&page=0",
+        // group=false → плоский список позиций; size маленький — диагностика.
+        ProbeEndpoint.FinanceOrders => $"/v1/finance/orders?page=0&size=5&group=false&shopIds={shopId}",
+        ProbeEndpoint.FinanceExpenses => $"/v1/finance/expenses?page=0&size=5&shopIds={shopId}",
+        _ => throw new ArgumentOutOfRangeException(nameof(endpoint)),
+    };
+
+    private static string Preview(string body, int max = 600)
+    {
+        if (string.IsNullOrEmpty(body)) return "(пустое тело)";
+        body = body.Trim();
+        return body.Length <= max ? body : body[..max] + "…(обрезано)";
+    }
+
+    private Dictionary<string, string> ExtractRateLimitHeaders(HttpResponseMessage resp)
+    {
+        var result = new Dictionary<string, string>();
+        foreach (var h in RateLimitHeaders)
+        {
+            if (resp.Headers.TryGetValues(h, out var values))
+                result[h] = string.Join(",", values);
+        }
+        return result;
     }
 
     /// <summary>GET с ретраями 429/5xx и логированием rate-limit заголовков.</summary>

@@ -19,23 +19,54 @@
 
 - `src/SellerTools.Core` — сущности домена и модель отчёта, без зависимостей.
 - `src/SellerTools.UzumApi` — DTO, `IUzumApiClient`, реальный клиент (rate-limit
-  заголовки + ретраи) и детерминированный `MockUzumApiClient` (~25 SKU).
-- `src/SellerTools.App` — хост: EF, сервис расчёта потеряшек, smoke-тест.
+  заголовки + ретраи, диагностический `ProbeAsync`) и детерминированный
+  `MockUzumApiClient` (~25 SKU).
+- `src/SellerTools.App` — хост: EF, расчёт потеряшек, Telegram-бот, шифрование,
+  консольная диагностика.
 
-## Запуск (Вечер №1)
+## Режимы запуска
+
+Первый аргумент выбирает режим (по умолчанию `bot`):
 
 ```bash
 docker compose up -d          # postgres:16 + redis:7
-dotnet run --project src/SellerTools.App
+
+# Telegram-бот (long polling) — основной режим
+dotnet run --project src/SellerTools.App -- bot
+
+# Консольная диагностика ключа: три GET-эндпоинта, статусы, rate-limit, тело
+dotnet run --project src/SellerTools.App -- diag <shopId> <apiKey>
+
+# Smoke-тест В1: отчёт по мок-магазину + снапшоты в Postgres
+dotnet run --project src/SellerTools.App -- smoke
 ```
 
-Ожидаемо: в консоли — отчёт «Сколько Uzum вам должен» по мок-магазину
-(таблица SKU: потеряно/брак/суммы + итоги двумя оценками), в Postgres — строки
-снапшотов за сегодня. Процесс отрабатывает smoke-тест и завершается.
+`diag` работает и в `Mock` (синтетические ответы), и в `Real` (живой API):
 
-По умолчанию `UzumApi:Mode = Mock` — живой ключ не нужен. Для реального API
-переключить в `src/SellerTools.App/appsettings.json` (или через env
-`UzumApi__Mode=Real`) и задать ключ/`shopId` (появится в В2–В3).
+```bash
+UzumApi__Mode=Real dotnet run --project src/SellerTools.App -- diag 123456 my-key
+```
+
+### Бот (Вечер №3)
+
+`/start` → выбор языка RU/UZ → ввод `shopId` → присылка API-ключа. Сообщение с
+ключом удаляется сразу; ключ проверяется запросом к API и сохраняется в БД
+только в зашифрованном (AES-256) виде. Ошибки связи с API — дружелюбными
+сообщениями (неверный ключ, магазин не найден, лимит, сеть, сервис). `/report` —
+задел (полный отчёт в боте будет в В5).
+
+## Секреты
+
+Токен бота и AES-ключ **не хранятся** в `appsettings.json` (он в git). Задайте их
+одним из способов:
+
+- файл `src/SellerTools.App/appsettings.Secrets.json` (в `.gitignore`):
+  ```json
+  { "Bot": { "Token": "<токен>" }, "Crypto": { "KeyBase64": "<base64 32 байта>" } }
+  ```
+- либо через env: `Bot__Token=...`, `Crypto__KeyBase64=...`
+
+AES-ключ (32 байта, base64) можно сгенерировать: `openssl rand -base64 32`.
 
 ## Конфигурация
 
@@ -53,6 +84,14 @@ dotnet run --project src/SellerTools.App
 
 ## Безопасность
 
-Ключи селлеров и токен бота — только через конфиг/env, никогда в коде, логах
-или git. `.env` и `*.local.json` в `.gitignore`. Ключ будет храниться только
-зашифрованным (AES, В3).
+Ключи селлеров, токен бота и AES-ключ — только через `appsettings.Secrets.json`
+или env, никогда в коде, логах или git (см. `.gitignore`). Ключ селлера в БД
+хранится только зашифрованным (AES-256), plaintext в логи не попадает.
+В боте право ключа — «Только чтение», изменить в магазине ничего нельзя.
+
+## Замечания по живому API (В2, частично)
+
+Прогон `diag` по реальному API с невалидным ключом даёт `403 Forbidden` с телом
+`RBAC: access denied` (не 401) — заголовок `Authorization: Bearer <key>` доходит
+до слоя авторизации. Rate-limit заголовки на 403 не приходят. Единицы дат/денег
+и доступ read-only ключа к `finance/*` — проверяются валидным ключом через `diag`.

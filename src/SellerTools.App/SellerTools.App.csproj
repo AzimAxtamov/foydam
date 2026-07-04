@@ -11,6 +11,8 @@
     <!-- EF Core + PostgreSQL -->
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.*" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.*" />
+    <!-- Telegram-бот (long polling) -->
+    <PackageReference Include="Telegram.Bot" Version="22.*" />
   </ItemGroup>
 
   <ItemGroup>
@@ -20,6 +22,9 @@
 
   <ItemGroup>
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Секреты: копируются в вывод, но не в git (см. .gitignore) -->
+    <None Update="appsettings.Secrets.json" CopyToOutputDirectory="PreserveNewest"
+          Condition="Exists('appsettings.Secrets.json')" />
   </ItemGroup>
 
 </Project>
