@@ -10,6 +10,14 @@ namespace SellerTools.UzumApi;
 public interface IUzumApiClient
 {
     /// <summary>
+    /// Магазины, доступные ключу (GET /v1/shops). Позволяет узнать shopId по ключу,
+    /// не спрашивая пользователя. Бросает при не-2xx (обработать выше).
+    /// </summary>
+    Task<IReadOnlyList<ShopDto>> GetShopsAsync(
+        string apiKey,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Все товары магазина (обходит все страницы). filter=ALL.
     /// </summary>
     Task<IReadOnlyList<ProductDto>> GetAllProductsAsync(

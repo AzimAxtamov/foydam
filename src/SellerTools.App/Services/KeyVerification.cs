@@ -1,6 +1,7 @@
 using System.Net;
 using SellerTools.UzumApi;
 using SellerTools.UzumApi.Diagnostics;
+using SellerTools.UzumApi.Dto;
 
 namespace SellerTools.App.Services;
 
@@ -17,6 +18,13 @@ public enum KeyCheckOutcome
 }
 
 public record KeyCheckResult(KeyCheckOutcome Outcome, int? StatusCode, string? Detail);
+
+/// <summary>
+/// Результат обнаружения магазинов по ключу: исход (для дружелюбного текста)
+/// и сам список магазинов при успехе.
+/// </summary>
+public record ShopDiscoveryResult(
+    KeyCheckOutcome Outcome, int? StatusCode, IReadOnlyList<ShopDto> Shops);
 
 /// <summary>
 /// Проверяет доступ ключа к API через диагностический Probe и классифицирует
@@ -50,5 +58,40 @@ public class KeyVerification
         };
 
         return new KeyCheckResult(outcome, code, null);
+    }
+
+    /// <summary>
+    /// Проверяет ключ и одновременно узнаёт его магазины через GET /v1/shops.
+    /// Это и валидация ключа, и автоопределение shopId — пользователю ничего
+    /// вводить не нужно. Исключения не пробрасываются — только результат.
+    /// </summary>
+    public async Task<ShopDiscoveryResult> DiscoverShopsAsync(
+        string apiKey, CancellationToken ct = default)
+    {
+        try
+        {
+            var shops = await _api.GetShopsAsync(apiKey, ct);
+            return new ShopDiscoveryResult(KeyCheckOutcome.Ok, 200, shops);
+        }
+        catch (HttpRequestException ex)
+        {
+            var code = ex.StatusCode.HasValue ? (int)ex.StatusCode.Value : (int?)null;
+            var outcome = ex.StatusCode switch
+            {
+                HttpStatusCode.Unauthorized => KeyCheckOutcome.Unauthorized,
+                HttpStatusCode.Forbidden => KeyCheckOutcome.Unauthorized,
+                HttpStatusCode.NotFound => KeyCheckOutcome.NotFound,
+                HttpStatusCode.TooManyRequests => KeyCheckOutcome.RateLimited,
+                { } s when (int)s >= 500 => KeyCheckOutcome.ServerError,
+                null => KeyCheckOutcome.Network, // соединение не состоялось
+                _ => KeyCheckOutcome.Unknown,
+            };
+            return new ShopDiscoveryResult(outcome, code, Array.Empty<ShopDto>());
+        }
+        catch (Exception)
+        {
+            // Таймаут, DNS, отмена сети и т.п.
+            return new ShopDiscoveryResult(KeyCheckOutcome.Network, null, Array.Empty<ShopDto>());
+        }
     }
 }

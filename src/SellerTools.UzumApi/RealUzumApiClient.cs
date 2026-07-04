@@ -46,6 +46,14 @@ public class RealUzumApiClient : IUzumApiClient
             _http.BaseAddress = new Uri(_options.BaseUrl);
     }
 
+    public async Task<IReadOnlyList<ShopDto>> GetShopsAsync(
+        string apiKey, CancellationToken ct = default)
+    {
+        var resp = await SendWithRetryAsync("/v1/shops", apiKey, ct);
+        var shops = await resp.Content.ReadFromJsonAsync<List<ShopDto>>(ct);
+        return shops ?? new List<ShopDto>();
+    }
+
     public async Task<IReadOnlyList<ProductDto>> GetAllProductsAsync(
         long shopId, string apiKey, CancellationToken ct = default)
     {

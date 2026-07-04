@@ -7,8 +7,8 @@ public enum DialogStep
 {
     None = 0,
     ChoosingLanguage,
-    AwaitingShopId,
     AwaitingKey,
+    ChoosingShop, // ключ прислан, у него несколько магазинов — выбираем какой
 }
 
 /// <summary>Состояние диалога одного пользователя (в памяти).</summary>
@@ -17,8 +17,14 @@ public class ConversationState
     public DialogStep Step { get; set; } = DialogStep.None;
     public string Language { get; set; } = "ru";
 
-    /// <summary>Введённый shopId (на шаге AwaitingKey).</summary>
-    public long? PendingShopId { get; set; }
+    /// <summary>
+    /// Ключ, ожидающий привязки (на шаге ChoosingShop, когда у ключа несколько
+    /// магазинов). Держим в памяти только до выбора магазина, затем шифруем и чистим.
+    /// </summary>
+    public string? PendingApiKey { get; set; }
+
+    /// <summary>Магазины, доступные ключу (id → имя), для шага выбора.</summary>
+    public Dictionary<long, string?> DiscoveredShops { get; set; } = new();
 }
 
 /// <summary>

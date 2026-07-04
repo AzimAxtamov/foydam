@@ -43,6 +43,17 @@ public class MockUzumApiClient : IUzumApiClient
         ("Чай «Кўк чой» зелёный", "250 г, листовой"),
     };
 
+    // Мок-магазин(ы) ключа. Один магазин — самый частый кейс.
+    public Task<IReadOnlyList<ShopDto>> GetShopsAsync(
+        string apiKey, CancellationToken ct = default)
+    {
+        var shops = new List<ShopDto>
+        {
+            new() { Id = 777001, Name = "Демо-магазин" },
+        };
+        return Task.FromResult<IReadOnlyList<ShopDto>>(shops);
+    }
+
     public Task<IReadOnlyList<ProductDto>> GetAllProductsAsync(
         long shopId, string apiKey, CancellationToken ct = default)
     {

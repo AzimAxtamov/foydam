@@ -294,10 +294,12 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 ### Неизвестное (статус после разбора спеки)
 
 1. ✅ **Закрыто [SPEC].** Auth = `Authorization: <ключ>` без `Bearer` (см. выше).
-2. ✅ **Закрыто [SPEC].** shopId по ключу → **`GET /v1/shops`** (без параметров)
-   отдаёт `array<OrganizationDto>` = `[{ id: int64, name: string }]`. Это список
-   всех магазинов, доступных ключу. Больше не надо вводить shopId вручную —
-   в В3/боте можно подтянуть автоматически после проверки ключа.
+2. ✅ **Закрыто [SPEC] + ВНЕДРЕНО.** shopId по ключу → **`GET /v1/shops`** (без
+   параметров) отдаёт `array<OrganizationDto>` = `[{ id: int64, name: string }]`.
+   Реализовано: `IUzumApiClient.GetShopsAsync`, `KeyVerification.DiscoverShopsAsync`
+   (валидирует ключ и заодно даёт магазины). Бот больше НЕ спрашивает shopId —
+   после ключа сам зовёт `/v1/shops`: один магазин → привязка сразу, несколько →
+   выбор кнопками. Имя магазина (`name`) сохраняется в `Shop.Title`.
 3. ⏳ **Частично.** Доступ read-only ключа к `finance/*` спека не гарантирует —
    проверить живым read-only ключом (`diag` в Real).
 4. ✅ **Закрыто [SPEC], но форматы РАЗНЫЕ по эндпоинтам:**

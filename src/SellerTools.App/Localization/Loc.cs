@@ -39,19 +39,19 @@ public static class Loc
                 "бракованные товары — по официальному API, ключом «Только чтение».\n\n" +
                 "Я работаю только на чтение и физически не могу ничего изменить в вашем магазине.",
 
-            // --- Бот: ввод shopId ---
-            ["bot.askShopId"] =
-                "Введите ID вашего магазина (shopId) — число из личного кабинета Uzum.",
-            ["bot.badShopId"] = "Не похоже на ID магазина. Пришлите число, например: 123456.",
-
-            // --- Бот: ввод ключа ---
+            // --- Бот: ввод ключа (shopId узнаём сами) ---
             ["bot.askKey"] =
-                "Теперь пришлите API-ключ этого магазина (права «Только чтение»).\n\n" +
+                "Пришлите API-ключ из личного кабинета Uzum (права «Только чтение»).\n" +
+                "Магазин я определю сам по ключу — вводить ID не нужно.\n\n" +
                 "🔒 Сообщение с ключом я удалю сразу же. Ключ хранится только в " +
                 "зашифрованном виде и никогда не попадает в логи. Присылайте ключ " +
                 "только сюда, в бота — не пересылайте его людям.",
             ["bot.keyReceived"] = "Ключ получил, сообщение удалил. Проверяю доступ к API…",
             ["bot.keyEmpty"] = "Пустое сообщение. Пришлите сам ключ текстом.",
+
+            // --- Бот: выбор магазина (если у ключа их несколько) ---
+            ["bot.chooseShop"] = "У ключа несколько магазинов. Какой подключить?",
+            ["bot.chooseShopHint"] = "Выберите магазин кнопкой выше.",
 
             // --- Бот: результат привязки ---
             ["bot.bindOk"] =
@@ -66,8 +66,12 @@ public static class Loc
                 "полностью и создан именно для этого магазина с правом «Только чтение», " +
                 "и пришлите ключ ещё раз.",
             ["bot.err.notFound"] =
-                "🔍 Магазин с таким ID не найден по этому ключу. Проверьте shopId и ключ. " +
-                "Начать заново — /start.",
+                "🔍 API не нашло данных по этому ключу. Проверьте ключ и попробуйте снова.",
+            ["bot.err.noShopsForKey"] =
+                "🤔 По этому ключу не найдено ни одного магазина. Проверьте, что ключ " +
+                "создан в личном кабинете нужного магазина, и пришлите его ещё раз.",
+            ["bot.err.sessionExpired"] =
+                "⌛ Сессия истекла. Начните заново — /start.",
             ["bot.err.rateLimited"] =
                 "⏳ Uzum временно ограничил частоту запросов. Подождите минуту и " +
                 "пришлите ключ ещё раз.",
@@ -106,12 +110,14 @@ public static class Loc
                 "Salom! Men Uzum sizga yo'qolgan va nuqsonli tovarlar uchun qancha " +
                 "qarzdorligini hisoblab beraman — rasmiy API, «Faqat o'qish» kaliti orqali.\n\n" +
                 "Men faqat o'qiyman va do'koningizda hech narsani o'zgartira olmayman.",
-            ["bot.askShopId"] = "Do'koningiz ID raqamini (shopId) yuboring.",
             ["bot.askKey"] =
-                "Endi shu do'konning API kalitini yuboring («Faqat o'qish»).\n\n" +
+                "API kalitini yuboring («Faqat o'qish»). Do'konni kalit orqali o'zim " +
+                "aniqlayman — ID kiritish shart emas.\n\n" +
                 "🔒 Kalitli xabarni darhol o'chiraman. Kalit faqat shifrlangan holda " +
                 "saqlanadi va hech qachon loglarga tushmaydi.",
             ["bot.keyReceived"] = "Kalit qabul qilindi, xabar o'chirildi. API tekshirilmoqda…",
+            ["bot.chooseShop"] = "Kalitda bir nechta do'kon bor. Qaysi birini ulaymiz?",
+            ["bot.chooseShopHint"] = "Yuqoridagi tugma orqali do'konni tanlang.",
         },
     };
 

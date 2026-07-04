@@ -134,12 +134,14 @@ public class TelegramBotService : IHostedService, IUpdateHandler
 
         switch (state.Step)
         {
-            case DialogStep.AwaitingShopId:
-                await OnShopIdAsync(bot, chatId, userId, text, state, ct);
-                break;
-
             case DialogStep.AwaitingKey:
                 await OnKeyAsync(bot, msg, userId, text, state, ct);
+                break;
+
+            case DialogStep.ChoosingShop:
+                // Ждём нажатия кнопки выбора магазина, а не текста.
+                await bot.SendMessage(chatId, Loc.T("bot.chooseShopHint", state.Language),
+                    cancellationToken: ct);
                 break;
 
             default:
@@ -175,8 +177,9 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         var userId = cq.From.Id;
         var chatId = cq.Message?.Chat.Id ?? userId;
         var state = _store.Get(userId);
+        var data = cq.Data ?? "";
 
-        if (cq.Data is { } data && data.StartsWith("lang:"))
+        if (data.StartsWith("lang:"))
         {
             var lang = data["lang:".Length..];
             if (!Loc.SupportedLanguages.Contains(lang)) lang = Loc.DefaultLanguage;
@@ -192,25 +195,17 @@ public class TelegramBotService : IHostedService, IUpdateHandler
             await bot.SendMessage(chatId, Loc.T("bot.langSet", lang), cancellationToken: ct);
             await bot.SendMessage(chatId, Loc.T("bot.welcome", lang), cancellationToken: ct);
 
-            state.Step = DialogStep.AwaitingShopId;
-            await bot.SendMessage(chatId, Loc.T("bot.askShopId", lang), cancellationToken: ct);
-        }
-    }
-
-    private async Task OnShopIdAsync(
-        ITelegramBotClient bot, long chatId, long userId, string text,
-        ConversationState state, CancellationToken ct)
-    {
-        if (!long.TryParse(text, out var shopId) || shopId <= 0)
-        {
-            await bot.SendMessage(chatId, Loc.T("bot.badShopId", state.Language),
-                cancellationToken: ct);
+            // Сразу просим ключ — shopId узнаем сами через /v1/shops.
+            state.Step = DialogStep.AwaitingKey;
+            await bot.SendMessage(chatId, Loc.T("bot.askKey", lang), cancellationToken: ct);
             return;
         }
 
-        state.PendingShopId = shopId;
-        state.Step = DialogStep.AwaitingKey;
-        await bot.SendMessage(chatId, Loc.T("bot.askKey", state.Language), cancellationToken: ct);
+        if (data.StartsWith("shop:"))
+        {
+            await bot.AnswerCallbackQuery(cq.Id, cancellationToken: ct);
+            await OnShopChosenAsync(bot, chatId, userId, data["shop:".Length..], state, ct);
+        }
     }
 
     private async Task OnKeyAsync(
@@ -220,56 +215,101 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         var chatId = msg.Chat.Id;
         var lang = state.Language;
 
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            await bot.SendMessage(chatId, Loc.T("bot.keyEmpty", lang), cancellationToken: ct);
-            return;
-        }
-
-        // КРИТИЧНО: немедленно удаляем сообщение с ключом.
+        // КРИТИЧНО: немедленно удаляем сообщение с ключом (даже если оно пустое/мусор).
         try
         {
             await bot.DeleteMessage(chatId, msg.MessageId, ct);
         }
         catch (Exception ex)
         {
-            // Не смогли удалить (нет прав/старое сообщение) — не показываем ключ, логируем факт.
             _log.LogWarning("Не удалось удалить сообщение с ключом: {Msg}", ex.Message);
+        }
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            await bot.SendMessage(chatId, Loc.T("bot.keyEmpty", lang), cancellationToken: ct);
+            return;
         }
 
         await bot.SendMessage(chatId, Loc.T("bot.keyReceived", lang), cancellationToken: ct);
 
-        var apiKey = text;
-        var shopId = state.PendingShopId ?? 0;
-        if (shopId <= 0)
-        {
-            state.Step = DialogStep.AwaitingShopId;
-            await bot.SendMessage(chatId, Loc.T("bot.askShopId", lang), cancellationToken: ct);
-            return;
-        }
+        var apiKey = text.Trim();
 
-        // Проверяем ключ и, если ок, — сохраняем зашифрованным.
+        // Один вызов /v1/shops: и валидирует ключ, и даёт список магазинов.
         using var scope = _scopes.CreateScope();
         var verifier = scope.ServiceProvider.GetRequiredService<KeyVerification>();
-        var sellers = scope.ServiceProvider.GetRequiredService<SellerService>();
 
-        var check = await verifier.CheckAsync(shopId, apiKey, ct);
+        var result = await verifier.DiscoverShopsAsync(apiKey, ct);
 
-        if (check.Outcome != KeyCheckOutcome.Ok)
+        if (result.Outcome != KeyCheckOutcome.Ok)
         {
-            await bot.SendMessage(chatId, FriendlyError(check.Outcome, lang), cancellationToken: ct);
+            await bot.SendMessage(chatId, FriendlyError(result.Outcome, lang), cancellationToken: ct);
             _log.LogInformation(
-                "Проверка ключа для shop {ShopId}: {Outcome} (HTTP {Code})",
-                shopId, check.Outcome, check.StatusCode);
-            // Остаёмся на шаге ключа — пользователь может прислать снова.
+                "Проверка ключа: {Outcome} (HTTP {Code})", result.Outcome, result.StatusCode);
+            return; // остаёмся на шаге ключа — можно прислать снова
+        }
+
+        if (result.Shops.Count == 0)
+        {
+            await bot.SendMessage(chatId, Loc.T("bot.err.noShopsForKey", lang), cancellationToken: ct);
             return;
         }
 
-        await sellers.BindShopAsync(userId, shopId, apiKey, ct: ct);
-        _store.Reset(userId);
+        if (result.Shops.Count == 1)
+        {
+            var only = result.Shops[0];
+            await BindAndConfirmAsync(bot, chatId, userId, only.Id, only.Name, apiKey, lang, ct);
+            return;
+        }
 
+        // Несколько магазинов — предлагаем выбрать кнопками.
+        state.PendingApiKey = apiKey;
+        state.DiscoveredShops = result.Shops.ToDictionary(s => s.Id, s => s.Name);
+        state.Step = DialogStep.ChoosingShop;
+
+        var rows = result.Shops.Select(s => new[]
+        {
+            InlineKeyboardButton.WithCallbackData(
+                string.IsNullOrWhiteSpace(s.Name) ? s.Id.ToString() : $"{s.Name} ({s.Id})",
+                $"shop:{s.Id}"),
+        });
+        await bot.SendMessage(chatId, Loc.T("bot.chooseShop", lang),
+            replyMarkup: new InlineKeyboardMarkup(rows), cancellationToken: ct);
+    }
+
+    private async Task OnShopChosenAsync(
+        ITelegramBotClient bot, long chatId, long userId, string shopIdRaw,
+        ConversationState state, CancellationToken ct)
+    {
+        var lang = state.Language;
+
+        if (!long.TryParse(shopIdRaw, out var shopId)
+            || state.PendingApiKey is not { } apiKey
+            || !state.DiscoveredShops.ContainsKey(shopId))
+        {
+            // Состояние протухло (рестарт бота и т.п.) — начать заново.
+            await bot.SendMessage(chatId, Loc.T("bot.err.sessionExpired", lang), cancellationToken: ct);
+            return;
+        }
+
+        var name = state.DiscoveredShops[shopId];
+        await BindAndConfirmAsync(bot, chatId, userId, shopId, name, apiKey, lang, ct);
+    }
+
+    /// <summary>Шифрует и сохраняет ключ, чистит состояние, шлёт подтверждение.</summary>
+    private async Task BindAndConfirmAsync(
+        ITelegramBotClient bot, long chatId, long userId, long shopId, string? shopName,
+        string apiKey, string lang, CancellationToken ct)
+    {
+        using var scope = _scopes.CreateScope();
+        var sellers = scope.ServiceProvider.GetRequiredService<SellerService>();
+        await sellers.BindShopAsync(userId, shopId, apiKey, title: shopName, ct: ct);
+
+        _store.Reset(userId); // ключ из памяти долой
+
+        var label = string.IsNullOrWhiteSpace(shopName) ? shopId.ToString() : $"{shopName} ({shopId})";
         await bot.SendMessage(chatId,
-            string.Format(Loc.T("bot.bindOk", lang), shopId), cancellationToken: ct);
+            string.Format(Loc.T("bot.bindOk", lang), label), cancellationToken: ct);
     }
 
     private async Task OnReportAsync(

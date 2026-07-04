@@ -49,7 +49,7 @@ public class SellerService
     /// </summary>
     public async Task BindShopAsync(
         long sellerId, long shopId, string apiKeyPlain,
-        DateTimeOffset? keyExpiresAt = null, CancellationToken ct = default)
+        string? title = null, DateTimeOffset? keyExpiresAt = null, CancellationToken ct = default)
     {
         await EnsureSellerAsync(sellerId, ct);
 
@@ -65,6 +65,8 @@ public class SellerService
         shop.SellerId = sellerId;
         shop.ApiKeyEncrypted = encrypted;
         shop.KeyExpiresAt = keyExpiresAt;
+        if (!string.IsNullOrWhiteSpace(title))
+            shop.Title = title;
 
         await _db.SaveChangesAsync(ct);
     }
