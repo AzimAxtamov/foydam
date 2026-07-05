@@ -1,8 +1,9 @@
 namespace SellerTools.App.Localization;
 
 /// <summary>
-/// Минимальный i18n-задел: словари ru/uz по ключам. Тексты UZ пока частичные,
-/// недостающие фолбэком берутся из ru. Структура — с первого дня.
+/// i18n: словари ru/uz по ключам. Покрытие обоих языков — полное (100%).
+/// UZ — черновой перевод (латиница), вычитать перед публичным запуском (см. CLAUDE.md).
+/// Недостающий ключ фолбэком берётся из ru, затем возвращается сам ключ.
 /// </summary>
 public static class Loc
 {
@@ -11,9 +12,10 @@ public static class Loc
 
     private static readonly Dictionary<string, Dictionary<string, string>> Strings = new()
     {
+        // ==================== RU ====================
         ["ru"] = new()
         {
-            // --- Отчёт ---
+            // --- Отчёт (общее) ---
             ["report.title"] = "Сколько Uzum вам должен",
             ["report.shop"] = "Магазин",
             ["report.date"] = "Дата",
@@ -32,22 +34,37 @@ public static class Loc
             ["report.scanned"] = "Просмотрено SKU",
 
             // --- Карточный отчёт в боте ---
-            // {0} — сумма по цене продажи (вся строка выводится жирной)
             ["report.card.owed"] = "💰 Uzum вам должен: до {0} сум",
-            // {0} — сумма по закупу
             ["report.card.minByPurchase"] = "Из них подтверждено закупом: {0} сум",
-            // {0} — магазин, {1} — дата дд.мм.гггг, {2} — кол-во проверенных товаров
             ["report.card.header"] = "🏪 {0} · {1} · проверено {2} товаров",
-            // Сегменты строки карточки (нулевые компоненты скрываются в коде).
-            ["report.card.missing"] = "❌ потеряно {0}",   // {0} — кол-во потеряно
-            ["report.card.defected"] = "⚠️ брак {0}",      // {0} — кол-во брак
-            ["report.card.sum"] = "≈ {0} сум",             // {0} — сумма по цене продажи
-            // {0} — сумма по закупу для этой позиции
+            ["report.card.missing"] = "❌ потеряно {0}",
+            ["report.card.defected"] = "⚠️ брак {0}",
+            ["report.card.sum"] = "≈ {0} сум",
             ["report.card.linePurchase"] = "   закуп: ≈ {0} сум",
-            // {0} — сколько ещё позиций скрыто
             ["report.card.more"] = "…и ещё {0} позиций — полный список в Excel",
-            // {0} — кол-во проверенных товаров
             ["report.card.clean"] = "✅ Потерь и брака не найдено — проверено {0} товаров, всё чисто",
+
+            // --- Excel: лист потеряшек ---
+            ["xlsx.loss.sheet"] = "Потеряшки",
+            ["xlsx.loss.title"] = "Сколько Uzum вам должен — {0} · на {1}",
+            ["xlsx.col.sku"] = "SKU",
+            ["xlsx.col.product"] = "Товар",
+            ["xlsx.col.article"] = "Артикул",
+            ["xlsx.col.barcode"] = "Штрихкод",
+            ["xlsx.col.missing"] = "Потеряно",
+            ["xlsx.col.defected"] = "Брак",
+            ["xlsx.col.price"] = "Цена продажи",
+            ["xlsx.col.purchase"] = "Закуп из ЛК",
+            ["xlsx.col.sumSale"] = "Сумма по продаже",
+            ["xlsx.col.sumPurchase"] = "Сумма по закупу",
+            ["xlsx.loss.total"] = "ИТОГО",
+            ["xlsx.loss.note"] =
+                "Закуп берётся из ЛК Uzum и у части товаров не заполнен — оценка по закупу неполная.",
+
+            // --- Excel: лист товары + ИКПУ ---
+            ["xlsx.ikpu.sheet"] = "Товары и ИКПУ",
+            ["xlsx.ikpu.title"] = "Товары и ИКПУ-коды — {0} · на {1}",
+            ["xlsx.col.ikpu"] = "ИКПУ",
 
             // --- Бот: приветствие и язык ---
             ["bot.chooseLanguage"] = "Выберите язык / Tilni tanlang:",
@@ -57,7 +74,7 @@ public static class Loc
                 "бракованные товары — по официальному API, ключом «Только чтение».\n\n" +
                 "Я работаю только на чтение и физически не могу ничего изменить в вашем магазине.",
 
-            // --- Бот: ввод ключа (shopId узнаём сами) ---
+            // --- Бот: ввод ключа ---
             ["bot.askKey"] =
                 "Пришлите API-ключ из личного кабинета Uzum (права «Только чтение»).\n" +
                 "Магазин я определю сам по ключу — вводить ID не нужно.\n\n" +
@@ -67,23 +84,46 @@ public static class Loc
             ["bot.keyReceived"] = "Ключ получил, сообщение удалил. Проверяю доступ к API…",
             ["bot.keyEmpty"] = "Пустое сообщение. Пришлите сам ключ текстом.",
 
-            // --- Бот: выбор магазина (если у ключа их несколько) ---
+            // --- Бот: выбор магазина ---
             ["bot.chooseShop"] = "У ключа несколько магазинов. Какой подключить?",
             ["bot.chooseShopHint"] = "Выберите магазин кнопкой выше.",
 
             // --- Бот: результат привязки ---
             ["bot.bindOk"] =
                 "✅ Готово! Магазин {0} привязан, ключ проверен и сохранён (зашифрован).\n" +
-                "Нажмите кнопку «📊 Отчёт» внизу — построю отчёт «Сколько Uzum вам должен».",
+                "Кнопки меню внизу: отчёт, выгрузки в Excel и обновление данных.",
             ["bot.bindOkNoReport"] =
                 "✅ Магазин {0} привязан, ключ сохранён (зашифрован).",
 
-            // --- Бот: меню и отчёт ---
+            // --- Бот: меню ---
             ["bot.menu.report"] = "📊 Отчёт",
+            ["bot.menu.lossExcel"] = "📉 Потеряшки в Excel",
+            ["bot.menu.ikpuExcel"] = "📦 Товары + ИКПУ",
+            ["bot.menu.refresh"] = "🔄 Обновить данные",
+
+            // --- Бот: отчёт ---
             ["bot.report.building"] = "Собираю свежие данные из Uzum, это займёт несколько секунд…",
             ["bot.report.fromSnapshot"] = "Отчёт по данным на {0}:",
             ["bot.report.syncFailed"] =
                 "😕 Не получилось получить данные из Uzum: {0}. Попробуйте позже.",
+            ["bot.report.noShopYet"] = "У вас пока нет привязанного магазина. Нажмите /start.",
+
+            // --- Бот: Excel-выгрузки ---
+            ["bot.excel.building"] = "Готовлю файл Excel…",
+            ["bot.excel.lossCaption"] =
+                "📉 Потеряшки: {0} позиций с потерями/браком. Итоги — в последней строке листа.",
+            ["bot.excel.lossEmptyCaption"] =
+                "📉 Потерь и брака не найдено — файл содержит только шапку.",
+            ["bot.excel.ikpuCaption"] =
+                "📦 Все товары магазина с ИКПУ-кодами ({0} SKU). Пригодится для ЭТТН.",
+            ["bot.excel.failed"] =
+                "😕 Не получилось собрать выгрузку: {0}. Попробуйте позже.",
+
+            // --- Бот: обновление данных (троттлинг) ---
+            ["bot.refresh.running"] = "Обновляю данные магазина из Uzum…",
+            ["bot.refresh.done"] = "✅ Данные обновлены: {0} SKU на {1}.",
+            ["bot.refresh.throttled"] =
+                "⏳ Данные от {0}. Обновить можно в {1} — чаще нельзя, чтобы не упереться в лимиты Uzum.",
 
             // --- Бот: дружелюбные ошибки ---
             ["bot.err.unauthorized"] =
@@ -115,20 +155,32 @@ public static class Loc
             ["bot.err.notConfigured"] =
                 "Бот ещё не настроен администратором (нет токена). Загляните позже.",
 
-            // --- Бот: команды/подсказки ---
-            ["bot.report.noShopYet"] = "У вас пока нет привязанного магазина. Нажмите /start.",
+            // --- Бот: прочее ---
             ["bot.unknown"] = "Не понял команду. Начать — /start.",
         },
 
-        // UZ — частичный перевод; недостающее фолбэком из ru.
+        // ==================== UZ (черновой перевод) ====================
         ["uz"] = new()
         {
+            // --- Hisobot (umumiy) ---
             ["report.title"] = "Uzum sizga qancha qarzdor",
             ["report.shop"] = "Do'kon",
             ["report.date"] = "Sana",
+            ["report.col.sku"] = "SKU / tovar",
+            ["report.col.missing"] = "Yo'qolgan",
+            ["report.col.defected"] = "Nuqson",
+            ["report.col.price"] = "Narx",
+            ["report.col.bySale"] = "Sotuv narxi bo'yicha",
+            ["report.col.byPurchase"] = "Xarid bo'yicha",
             ["report.total"] = "JAMI",
+            ["report.totalBySale"] = "Sotuv narxi bo'yicha jami",
+            ["report.totalByPurchase"] = "Xarid bo'yicha jami",
+            ["report.noLosses"] = "Yo'qolgan va nuqsonli tovarlar topilmadi — hammasi joyida.",
+            ["report.purchaseNote"] =
+                "* Xarid narxi Uzum shaxsiy kabinetidan olinadi va ba'zi tovarlarda to'ldirilmagan — xarid bo'yicha baho to'liq emas.",
+            ["report.scanned"] = "Tekshirilgan SKU",
 
-            // Карточный отчёт.
+            // --- Kartochka hisoboti ---
             ["report.card.owed"] = "💰 Uzum sizga qarzdor: {0} so'mgacha",
             ["report.card.minByPurchase"] = "Shundan xarid bilan tasdiqlangan: {0} so'm",
             ["report.card.header"] = "🏪 {0} · {1} · {2} ta tovar tekshirildi",
@@ -139,20 +191,119 @@ public static class Loc
             ["report.card.more"] = "…va yana {0} ta pozitsiya — to'liq ro'yxat Excelda",
             ["report.card.clean"] = "✅ Yo'qotish va nuqson topilmadi — {0} ta tovar tekshirildi, hammasi toza",
 
+            // --- Excel: yo'qotishlar varag'i ---
+            ["xlsx.loss.sheet"] = "Yo'qotishlar",
+            ["xlsx.loss.title"] = "Uzum sizga qancha qarzdor — {0} · {1} holatiga",
+            ["xlsx.col.sku"] = "SKU",
+            ["xlsx.col.product"] = "Tovar",
+            ["xlsx.col.article"] = "Artikul",
+            ["xlsx.col.barcode"] = "Shtrix-kod",
+            ["xlsx.col.missing"] = "Yo'qolgan",
+            ["xlsx.col.defected"] = "Nuqson",
+            ["xlsx.col.price"] = "Sotuv narxi",
+            ["xlsx.col.purchase"] = "Kabinetdagi xarid",
+            ["xlsx.col.sumSale"] = "Sotuv bo'yicha summa",
+            ["xlsx.col.sumPurchase"] = "Xarid bo'yicha summa",
+            ["xlsx.loss.total"] = "JAMI",
+            ["xlsx.loss.note"] =
+                "Xarid narxi Uzum kabinetidan olinadi va ba'zi tovarlarda to'ldirilmagan — xarid bo'yicha baho to'liq emas.",
+
+            // --- Excel: tovarlar + IKPU ---
+            ["xlsx.ikpu.sheet"] = "Tovarlar va IKPU",
+            ["xlsx.ikpu.title"] = "Tovarlar va IKPU kodlari — {0} · {1} holatiga",
+            ["xlsx.col.ikpu"] = "IKPU",
+
+            // --- Bot: salomlashuv va til ---
             ["bot.chooseLanguage"] = "Tilni tanlang / Выберите язык:",
             ["bot.langSet"] = "Til o'rnatildi: o'zbekcha.",
             ["bot.welcome"] =
                 "Salom! Men Uzum sizga yo'qolgan va nuqsonli tovarlar uchun qancha " +
                 "qarzdorligini hisoblab beraman — rasmiy API, «Faqat o'qish» kaliti orqali.\n\n" +
                 "Men faqat o'qiyman va do'koningizda hech narsani o'zgartira olmayman.",
+
+            // --- Bot: kalit kiritish ---
             ["bot.askKey"] =
-                "API kalitini yuboring («Faqat o'qish»). Do'konni kalit orqali o'zim " +
-                "aniqlayman — ID kiritish shart emas.\n\n" +
+                "Uzum shaxsiy kabinetidan API kalitini yuboring («Faqat o'qish»). " +
+                "Do'konni kalit orqali o'zim aniqlayman — ID kiritish shart emas.\n\n" +
                 "🔒 Kalitli xabarni darhol o'chiraman. Kalit faqat shifrlangan holda " +
-                "saqlanadi va hech qachon loglarga tushmaydi.",
+                "saqlanadi va hech qachon loglarga tushmaydi. Kalitni faqat shu botga " +
+                "yuboring — odamlarga uzatmang.",
             ["bot.keyReceived"] = "Kalit qabul qilindi, xabar o'chirildi. API tekshirilmoqda…",
+            ["bot.keyEmpty"] = "Bo'sh xabar. Kalitni matn ko'rinishida yuboring.",
+
+            // --- Bot: do'kon tanlash ---
             ["bot.chooseShop"] = "Kalitda bir nechta do'kon bor. Qaysi birini ulaymiz?",
             ["bot.chooseShopHint"] = "Yuqoridagi tugma orqali do'konni tanlang.",
+
+            // --- Bot: ulanish natijasi ---
+            ["bot.bindOk"] =
+                "✅ Tayyor! Do'kon {0} ulandi, kalit tekshirildi va saqlandi (shifrlangan).\n" +
+                "Quyidagi menyu tugmalari: hisobot, Excel yuklamalar va ma'lumotni yangilash.",
+            ["bot.bindOkNoReport"] =
+                "✅ Do'kon {0} ulandi, kalit saqlandi (shifrlangan).",
+
+            // --- Bot: menyu ---
+            ["bot.menu.report"] = "📊 Hisobot",
+            ["bot.menu.lossExcel"] = "📉 Yo'qotishlar Excelda",
+            ["bot.menu.ikpuExcel"] = "📦 Tovarlar + IKPU",
+            ["bot.menu.refresh"] = "🔄 Ma'lumotni yangilash",
+
+            // --- Bot: hisobot ---
+            ["bot.report.building"] = "Uzumdan yangi ma'lumot yig'yapman, bir necha soniya…",
+            ["bot.report.fromSnapshot"] = "{0} holatidagi ma'lumot bo'yicha hisobot:",
+            ["bot.report.syncFailed"] =
+                "😕 Uzumdan ma'lumot olib bo'lmadi: {0}. Keyinroq urinib ko'ring.",
+            ["bot.report.noShopYet"] = "Sizda hali ulangan do'kon yo'q. /start ni bosing.",
+
+            // --- Bot: Excel yuklamalar ---
+            ["bot.excel.building"] = "Excel faylini tayyorlayapman…",
+            ["bot.excel.lossCaption"] =
+                "📉 Yo'qotishlar: {0} ta yo'qotish/nuqsonli pozitsiya. Jami — varaqning oxirgi qatorida.",
+            ["bot.excel.lossEmptyCaption"] =
+                "📉 Yo'qotish va nuqson topilmadi — faylda faqat sarlavha bor.",
+            ["bot.excel.ikpuCaption"] =
+                "📦 Do'konning barcha tovarlari IKPU kodlari bilan ({0} ta SKU). ETTN uchun kerak bo'ladi.",
+            ["bot.excel.failed"] =
+                "😕 Yuklamani tayyorlab bo'lmadi: {0}. Keyinroq urinib ko'ring.",
+
+            // --- Bot: ma'lumotni yangilash (cheklov) ---
+            ["bot.refresh.running"] = "Do'kon ma'lumotini Uzumdan yangilayapman…",
+            ["bot.refresh.done"] = "✅ Ma'lumot yangilandi: {0} ta SKU, {1} holatiga.",
+            ["bot.refresh.throttled"] =
+                "⏳ Ma'lumot {0} holatiga. Yangilash {1} da mumkin — Uzum limitiga urilmaslik uchun tez-tez mumkin emas.",
+
+            // --- Bot: xatoliklar ---
+            ["bot.err.unauthorized"] =
+                "🔑 Kalit to'g'ri kelmadi (ruxsat yo'q). Kalit to'liq nusxalanganini va " +
+                "aynan shu do'kon uchun «Faqat o'qish» huquqi bilan yaratilganini tekshiring, " +
+                "so'ng kalitni yana yuboring.",
+            ["bot.err.notFound"] =
+                "🔍 API bu kalit bo'yicha ma'lumot topmadi. Kalitni tekshirib, qaytadan urinib ko'ring.",
+            ["bot.err.noShopsForKey"] =
+                "🤔 Bu kalit bo'yicha birorta do'kon topilmadi. Kalit kerakli do'kon kabinetida " +
+                "yaratilganini tekshiring va uni yana yuboring.",
+            ["bot.err.sessionExpired"] =
+                "⌛ Sessiya tugadi. Qaytadan boshlang — /start.",
+            ["bot.err.rateLimited"] =
+                "⏳ Uzum so'rovlar tezligini vaqtincha cheklab qo'ydi. Bir daqiqa kuting va " +
+                "kalitni yana yuboring.",
+            ["bot.err.network"] =
+                "🌐 Uzum API bilan bog'lanib bo'lmadi (tarmoq yoki xizmat mavjud emas). " +
+                "Bu ulanish tomonidagi muammo, kalitingizda emas. Keyinroq urinib ko'ring " +
+                "yoki kalitni yana yuboring.",
+            ["bot.err.server"] =
+                "⚠️ Uzum API server xatosi bilan javob berdi. Odatda bu vaqtinchalik — " +
+                "bir necha daqiqadan so'ng qayta urinib ko'ring.",
+            ["bot.err.generic"] =
+                "😕 Kalitni tekshirishda nimadir noto'g'ri ketdi. Qayta urinib ko'ring yoki " +
+                "qaytadan boshlang — /start.",
+            ["bot.err.noShop"] =
+                "Avval do'konni ulang: /start.",
+            ["bot.err.notConfigured"] =
+                "Bot hali administrator tomonidan sozlanmagan (token yo'q). Keyinroq kiring.",
+
+            // --- Bot: boshqa ---
+            ["bot.unknown"] = "Buyruqni tushunmadim. Boshlash — /start.",
         },
     };
 
@@ -163,5 +314,12 @@ public static class Loc
         if (Strings[DefaultLanguage].TryGetValue(key, out var ru))
             return ru;
         return key;
+    }
+
+    /// <summary>Ключи, которых не хватает в языке относительно ru (для самопроверки покрытия).</summary>
+    public static IReadOnlyList<string> MissingKeys(string lang)
+    {
+        if (!Strings.TryGetValue(lang, out var dict)) return Array.Empty<string>();
+        return Strings[DefaultLanguage].Keys.Where(k => !dict.ContainsKey(k)).ToList();
     }
 }

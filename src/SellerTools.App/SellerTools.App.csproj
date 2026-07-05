@@ -22,6 +22,8 @@
     <PackageReference Include="Hangfire.Core" Version="1.8.*" />
     <PackageReference Include="Hangfire.AspNetCore" Version="1.8.*" />
     <PackageReference Include="Hangfire.PostgreSql" Version="1.21.*" />
+    <!-- Excel-выгрузки (потеряшки, товары+ИКПУ) -->
+    <PackageReference Include="ClosedXML" Version="0.105.*" />
   </ItemGroup>
 
   <ItemGroup>

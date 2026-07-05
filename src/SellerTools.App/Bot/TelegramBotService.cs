@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using SellerTools.App.Configuration;
 using SellerTools.App.Localization;
 using SellerTools.App.Services;
+using SellerTools.UzumApi.Dto;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Polling;
@@ -21,6 +22,9 @@ namespace SellerTools.App.Bot;
 /// </summary>
 public class TelegramBotService : IHostedService, IUpdateHandler
 {
+    // Минимальный интервал между ручными обновлениями (защита от спама лимитов).
+    private static readonly TimeSpan RefreshThrottle = TimeSpan.FromMinutes(30);
+
     private readonly BotOptions _options;
     private readonly IServiceScopeFactory _scopes;
     private readonly ConversationStore _store;
@@ -126,13 +130,26 @@ public class TelegramBotService : IHostedService, IUpdateHandler
             return;
         }
 
-        // /report или кнопка «📊 Отчёт» из меню.
+        // Кнопки меню (работают на любом языке) и команды.
         if (text.StartsWith("/report", StringComparison.OrdinalIgnoreCase)
-            || text == Loc.T("bot.menu.report", state.Language)
-            || text == Loc.T("bot.menu.report", "ru")
-            || text == Loc.T("bot.menu.report", "uz"))
+            || IsMenu(text, "bot.menu.report", state.Language))
         {
             await OnReportAsync(bot, chatId, userId, state.Language, ct);
+            return;
+        }
+        if (IsMenu(text, "bot.menu.refresh", state.Language))
+        {
+            await OnRefreshAsync(bot, chatId, userId, state.Language, ct);
+            return;
+        }
+        if (IsMenu(text, "bot.menu.lossExcel", state.Language))
+        {
+            await OnExcelAsync(bot, chatId, userId, state.Language, loss: true, ct);
+            return;
+        }
+        if (IsMenu(text, "bot.menu.ikpuExcel", state.Language))
+        {
+            await OnExcelAsync(bot, chatId, userId, state.Language, loss: false, ct);
             return;
         }
 
@@ -317,12 +334,28 @@ public class TelegramBotService : IHostedService, IUpdateHandler
             replyMarkup: MainMenu(lang), cancellationToken: ct);
     }
 
-    /// <summary>Постоянное меню с кнопкой «Отчёт» (показываем после привязки).</summary>
+    /// <summary>Постоянное меню (показываем после привязки): отчёт, две выгрузки, обновление.</summary>
     private static ReplyKeyboardMarkup MainMenu(string lang) =>
-        new(new[] { new KeyboardButton(Loc.T("bot.menu.report", lang)) })
+        new(new[]
+        {
+            new[]
+            {
+                new KeyboardButton(Loc.T("bot.menu.report", lang)),
+                new KeyboardButton(Loc.T("bot.menu.refresh", lang)),
+            },
+            new[]
+            {
+                new KeyboardButton(Loc.T("bot.menu.lossExcel", lang)),
+                new KeyboardButton(Loc.T("bot.menu.ikpuExcel", lang)),
+            },
+        })
         {
             ResizeKeyboard = true,
         };
+
+    /// <summary>Совпадает ли текст с кнопкой меню (на любом из языков).</summary>
+    private static bool IsMenu(string text, string key, string lang) =>
+        text == Loc.T(key, lang) || text == Loc.T(key, "ru") || text == Loc.T(key, "uz");
 
     private async Task OnReportAsync(
         ITelegramBotClient bot, long chatId, long userId, string lang, CancellationToken ct)
@@ -369,6 +402,128 @@ public class TelegramBotService : IHostedService, IUpdateHandler
 
         await bot.SendMessage(chatId, BotReportRenderer.Render(report, lang),
             parseMode: ParseMode.Markdown, replyMarkup: MainMenu(lang), cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// Excel-выгрузка: loss=true — потеряшки, loss=false — товары+ИКПУ.
+    /// Тянет свежие SKU из API, формирует .xlsx и шлёт документом + подпись.
+    /// </summary>
+    private async Task OnExcelAsync(
+        ITelegramBotClient bot, long chatId, long userId, string lang, bool loss, CancellationToken ct)
+    {
+        using var scope = _scopes.CreateScope();
+        var sellers = scope.ServiceProvider.GetRequiredService<SellerService>();
+        var syncSvc = scope.ServiceProvider.GetRequiredService<ShopSyncService>();
+        var excel = scope.ServiceProvider.GetRequiredService<ExcelExportService>();
+
+        var shops = await sellers.GetShopsAsync(userId, ct);
+        if (shops.Count == 0)
+        {
+            await bot.SendMessage(chatId, Loc.T("bot.report.noShopYet", lang), cancellationToken: ct);
+            return;
+        }
+        var shop = shops[0];
+
+        await bot.SendMessage(chatId, Loc.T("bot.excel.building", lang), cancellationToken: ct);
+
+        IReadOnlyList<SkuDto> skus;
+        try
+        {
+            skus = await syncSvc.GetFreshSkusAsync(shop, ct);
+        }
+        catch (Exception ex)
+        {
+            await bot.SendMessage(chatId,
+                string.Format(Loc.T("bot.excel.failed", lang), ex.Message), cancellationToken: ct);
+            _log.LogWarning(ex, "Excel-выгрузка магазина {ShopId} не удалась", shop.Id);
+            return;
+        }
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var file = loss
+            ? excel.BuildLossReport(shop.Id, shop.Title, today, skus, lang)
+            : excel.BuildIkpuList(shop.Id, shop.Title, today, skus, lang);
+
+        string caption;
+        if (loss)
+        {
+            var lossCount = skus.Count(s => s.QuantityMissing + s.QuantityDefected > 0);
+            caption = lossCount > 0
+                ? string.Format(Loc.T("bot.excel.lossCaption", lang), lossCount)
+                : Loc.T("bot.excel.lossEmptyCaption", lang);
+        }
+        else
+        {
+            caption = string.Format(Loc.T("bot.excel.ikpuCaption", lang), skus.Count);
+        }
+
+        using var ms = new MemoryStream(file.Bytes);
+        await bot.SendDocument(chatId, InputFile.FromStream(ms, file.FileName),
+            caption: caption, replyMarkup: MainMenu(lang), cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// Ручное обновление данных магазина. Не чаще раза в 30 минут — иначе
+    /// сообщаем, когда данные и когда можно обновить снова.
+    /// </summary>
+    private async Task OnRefreshAsync(
+        ITelegramBotClient bot, long chatId, long userId, string lang, CancellationToken ct)
+    {
+        using var scope = _scopes.CreateScope();
+        var sellers = scope.ServiceProvider.GetRequiredService<SellerService>();
+        var syncSvc = scope.ServiceProvider.GetRequiredService<ShopSyncService>();
+
+        var shops = await sellers.GetShopsAsync(userId, ct);
+        if (shops.Count == 0)
+        {
+            await bot.SendMessage(chatId, Loc.T("bot.report.noShopYet", lang), cancellationToken: ct);
+            return;
+        }
+        var shop = shops[0];
+
+        var lastSync = await syncSvc.GetLastSyncAtAsync(shop.Id, ct);
+        if (lastSync is { } last && DateTimeOffset.UtcNow - last < RefreshThrottle)
+        {
+            var nextAt = last + RefreshThrottle;
+            await bot.SendMessage(chatId, string.Format(
+                Loc.T("bot.refresh.throttled", lang), LocalTime(last), LocalTime(nextAt)),
+                replyMarkup: MainMenu(lang), cancellationToken: ct);
+            return;
+        }
+
+        await bot.SendMessage(chatId, Loc.T("bot.refresh.running", lang), cancellationToken: ct);
+
+        var result = await syncSvc.SyncShopAsync(shop, ct);
+        if (!result.Ok)
+        {
+            await bot.SendMessage(chatId,
+                string.Format(Loc.T("bot.report.syncFailed", lang), result.Error),
+                replyMarkup: MainMenu(lang), cancellationToken: ct);
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        await bot.SendMessage(chatId, string.Format(
+            Loc.T("bot.refresh.done", lang), result.SkusSynced, LocalTime(now)),
+            replyMarkup: MainMenu(lang), cancellationToken: ct);
+    }
+
+    // Время в тайм-зоне Ташкента, формат ЧЧ:ММ дд.мм.гггг.
+    private static string LocalTime(DateTimeOffset utc)
+    {
+        var tz = ResolveTashkentTz();
+        var local = TimeZoneInfo.ConvertTime(utc, tz);
+        return local.ToString("HH:mm dd.MM.yyyy");
+    }
+
+    private static TimeZoneInfo ResolveTashkentTz()
+    {
+        foreach (var id in new[] { "Asia/Tashkent", "Central Asia Standard Time" })
+        {
+            try { return TimeZoneInfo.FindSystemTimeZoneById(id); }
+            catch (TimeZoneNotFoundException) { }
+        }
+        return TimeZoneInfo.CreateCustomTimeZone("UZT", TimeSpan.FromHours(5), "Uzbekistan Time", "UZT");
     }
 
     /// <summary>Маппинг исхода проверки ключа → дружелюбный текст.</summary>

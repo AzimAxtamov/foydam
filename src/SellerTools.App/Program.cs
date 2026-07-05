@@ -124,6 +124,7 @@ static void RegisterSharedServices(IServiceCollection services, IConfiguration c
     services.AddScoped<KeyVerification>();
     services.AddScoped<LossReportService>();
     services.AddScoped<ShopSyncService>();
+    services.AddSingleton<ExcelExportService>();
     services.AddTransient<DiagnosticRunner>();
 }
 

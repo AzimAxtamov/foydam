@@ -63,6 +63,30 @@ public class ShopSyncService
     }
 
     /// <summary>
+    /// Свежие SKU магазина из API (для Excel-выгрузок: нужны штрихкод/артикул/ИКПУ).
+    /// Расшифровывает ключ. Бросает при ошибке — вызывающий обрабатывает.
+    /// </summary>
+    public async Task<IReadOnlyList<SkuDto>> GetFreshSkusAsync(Shop shop, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(shop.ApiKeyEncrypted))
+            throw new InvalidOperationException("нет сохранённого ключа");
+
+        var apiKey = _crypto.Decrypt(shop.ApiKeyEncrypted);
+        var products = await _api.GetAllProductsAsync(shop.Id, apiKey, ct);
+        return products.SelectMany(p => p.SkuList).ToList();
+    }
+
+    /// <summary>Момент последнего синка магазина (max CapturedAt снапшотов) или null.</summary>
+    public async Task<DateTimeOffset?> GetLastSyncAtAsync(long shopId, CancellationToken ct = default)
+    {
+        var times = await _db.SkuDailySnapshots
+            .Where(x => x.ShopId == shopId)
+            .Select(x => x.CapturedAt)
+            .ToListAsync(ct);
+        return times.Count == 0 ? null : times.Max();
+    }
+
+    /// <summary>
     /// Синк по shopId + открытому ключу (для разового синка из бота, когда ключ
     /// уже расшифрован). Тоже не бросает.
     /// </summary>
