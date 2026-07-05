@@ -5,67 +5,96 @@ using SellerTools.Core.Reports;
 namespace SellerTools.App.Services;
 
 /// <summary>
-/// Рендер отчёта для Telegram: итоговые суммы двумя оценками в первых двух строках,
-/// затем таблица (моноширинная, в блоке кода), сноска про незаполненный закуп.
-/// Заголовки колонок — полными словами («Потеряно», «Брак»), без сокращений.
+/// Рендер отчёта для Telegram карточками на каждый SKU (без моноширинной таблицы).
+/// Шапка — сколько Uzum должен двумя оценками, затем карточки топ-позиций.
+/// Даты в формате дд.мм.гггг. Учитывает лимит Telegram 4096 символов.
 /// </summary>
 public static class BotReportRenderer
 {
-    /// <summary>Возвращает готовый текст сообщения (Markdown, таблица в ```-блоке).</summary>
+    private const int MaxCards = 10;       // показываем не более топ-10 позиций
+    private const int NameMaxLen = 35;     // обрезка названия SKU
+    private const int TelegramLimit = 4096;
+    private const int SafeLimit = 3900;    // запас под шапку/сноску/хвост
+
+    /// <summary>Готовый текст сообщения (Markdown).</summary>
     public static string Render(LossReport r, string lang = "ru")
     {
+        var date = r.Date.ToString("dd.MM.yyyy");
+        var shop = string.IsNullOrWhiteSpace(r.ShopTitle) ? $"{r.ShopId}" : r.ShopTitle!;
+
+        // Нулевые потери — отдельный короткий случай.
+        if (r.Rows.Count == 0)
+            return string.Format(Loc.T("report.card.clean", lang), r.TotalSkusScanned);
+
         var sb = new StringBuilder();
 
-        var shop = string.IsNullOrWhiteSpace(r.ShopTitle) ? $"{r.ShopId}" : $"{r.ShopTitle} ({r.ShopId})";
-
-        // Первые две строки — итоговые суммы двумя оценками.
-        sb.AppendLine($"💰 {Loc.T("report.totalBySale", lang)}: *{Fmt(r.TotalEstimateBySalePrice)} сум*");
-        sb.AppendLine($"📦 {Loc.T("report.totalByPurchase", lang)}: *{Fmt(r.TotalEstimateByPurchasePrice)} сум*");
+        // Шапка: первая строка (💰 + текст) целиком жирная, затем подтверждённое
+        // закупом и строка магазина.
+        sb.AppendLine($"*{string.Format(Loc.T("report.card.owed", lang), Fmt(r.TotalEstimateBySalePrice))}*");
+        sb.AppendLine(string.Format(Loc.T("report.card.minByPurchase", lang), Fmt(r.TotalEstimateByPurchasePrice)));
+        sb.AppendLine(string.Format(Loc.T("report.card.header", lang), shop, date, r.TotalSkusScanned));
         sb.AppendLine();
-        sb.AppendLine($"🏪 {Loc.T("report.shop", lang)}: {shop}");
-        sb.AppendLine($"📅 {Loc.T("report.date", lang)}: {r.Date:yyyy-MM-dd}   " +
-                      $"{Loc.T("report.scanned", lang)}: {r.TotalSkusScanned}");
 
-        if (r.Rows.Count == 0)
+        // Rows уже отсортированы по убыванию EstimateBySalePrice → берём топ.
+        var shown = 0;
+        var limit = Math.Min(MaxCards, r.Rows.Count);
+        for (var i = 0; i < limit; i++)
+        {
+            var card = RenderCard(i + 1, r.Rows[i], lang);
+
+            // Защита от лимита Telegram: если следующая карточка не влезает — стоп.
+            if (sb.Length + card.Length > SafeLimit)
+                break;
+
+            sb.Append(card);
+            shown++;
+        }
+
+        // Хвост: сколько позиций осталось за кадром (топ-10 или из-за лимита).
+        var hidden = r.Rows.Count - shown;
+        if (hidden > 0)
         {
             sb.AppendLine();
-            sb.AppendLine($"✅ {Loc.T("report.noLosses", lang)}");
-            return sb.ToString();
+            sb.AppendLine(string.Format(Loc.T("report.card.more", lang), hidden));
         }
 
-        // Таблица в моноширинном блоке — полные заголовки.
-        sb.AppendLine();
-        sb.AppendLine("```");
-        var missing = Loc.T("report.col.missing", lang); // «Потеряно»
-        var defected = Loc.T("report.col.defected", lang); // «Брак»
-        sb.AppendLine(string.Format(
-            "{0,-26} {1,8} {2,6} {3,14} {4,14}",
-            Loc.T("report.col.sku", lang), missing, defected,
-            Loc.T("report.col.bySale", lang), Loc.T("report.col.byPurchase", lang)));
-        sb.AppendLine(new string('-', 72));
-
-        foreach (var row in r.Rows)
-        {
-            var name = Truncate($"{row.ProductTitle} · {row.SkuTitle}", 26);
-            var byPurchase = row.HasPurchasePrice ? Fmt(row.EstimateByPurchasePrice) : "—";
-            sb.AppendLine(string.Format(
-                "{0,-26} {1,8} {2,6} {3,14} {4,14}",
-                name, row.Missing, row.Defected, Fmt(row.EstimateBySalePrice), byPurchase));
-        }
-
-        sb.AppendLine(new string('-', 72));
-        sb.AppendLine(string.Format(
-            "{0,-26} {1,8} {2,6} {3,14} {4,14}",
-            Loc.T("report.total", lang), r.TotalMissing, r.TotalDefected,
-            Fmt(r.TotalEstimateBySalePrice), Fmt(r.TotalEstimateByPurchasePrice)));
-        sb.AppendLine("```");
-
+        // Сноска про незаполненный закуп.
         if (r.HasSkusWithoutPurchasePrice)
+        {
+            sb.AppendLine();
             sb.AppendLine($"_{Loc.T("report.purchaseNote", lang)}_");
+        }
 
+        var text = sb.ToString();
+        // Крайняя подстраховка — жёстко не превышаем лимит Telegram.
+        return text.Length <= TelegramLimit ? text : text[..TelegramLimit];
+    }
+
+    private static string RenderCard(int number, LossReportRow row, string lang)
+    {
+        var name = Truncate(string.IsNullOrWhiteSpace(row.ProductTitle) ? row.SkuTitle : row.ProductTitle, NameMaxLen);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"{number}. *{Escape(name)}*");
+
+        // Строка потерь: нулевые компоненты (потеряно 0 / брак 0) скрываем.
+        var parts = new List<string>();
+        if (row.Missing > 0)
+            parts.Add(string.Format(Loc.T("report.card.missing", lang), row.Missing));
+        if (row.Defected > 0)
+            parts.Add(string.Format(Loc.T("report.card.defected", lang), row.Defected));
+        parts.Add(string.Format(Loc.T("report.card.sum", lang), Fmt(row.EstimateBySalePrice)));
+        sb.AppendLine(string.Join(" · ", parts));
+
+        // Закуп второй строкой — только если заполнен.
+        if (row.HasPurchasePrice)
+            sb.AppendLine(string.Format(Loc.T("report.card.linePurchase", lang), Fmt(row.EstimateByPurchasePrice)));
+
+        sb.AppendLine();
         return sb.ToString();
     }
 
+    // Разряды через неразрывный пробел (без зависимости от культуры).
     private static string Fmt(long v)
     {
         var s = Math.Abs(v).ToString();
@@ -79,5 +108,9 @@ public static class BotReportRenderer
     }
 
     private static string Truncate(string s, int len) =>
-        s.Length <= len ? s : s.Substring(0, len - 1) + "…";
+        s.Length <= len ? s : s[..(len - 1)] + "…";
+
+    // Экранируем спецсимволы Markdown в названии, чтобы не ломать разметку.
+    private static string Escape(string s) =>
+        s.Replace("*", "\\*").Replace("_", "\\_").Replace("`", "\\`").Replace("[", "\\[");
 }

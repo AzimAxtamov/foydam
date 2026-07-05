@@ -31,6 +31,24 @@ public static class Loc
                 "* Закуп берётся из ЛК Uzum и у части товаров не заполнен — оценка по закупу неполная.",
             ["report.scanned"] = "Просмотрено SKU",
 
+            // --- Карточный отчёт в боте ---
+            // {0} — сумма по цене продажи (вся строка выводится жирной)
+            ["report.card.owed"] = "💰 Uzum вам должен: до {0} сум",
+            // {0} — сумма по закупу
+            ["report.card.minByPurchase"] = "Из них подтверждено закупом: {0} сум",
+            // {0} — магазин, {1} — дата дд.мм.гггг, {2} — кол-во проверенных товаров
+            ["report.card.header"] = "🏪 {0} · {1} · проверено {2} товаров",
+            // Сегменты строки карточки (нулевые компоненты скрываются в коде).
+            ["report.card.missing"] = "❌ потеряно {0}",   // {0} — кол-во потеряно
+            ["report.card.defected"] = "⚠️ брак {0}",      // {0} — кол-во брак
+            ["report.card.sum"] = "≈ {0} сум",             // {0} — сумма по цене продажи
+            // {0} — сумма по закупу для этой позиции
+            ["report.card.linePurchase"] = "   закуп: ≈ {0} сум",
+            // {0} — сколько ещё позиций скрыто
+            ["report.card.more"] = "…и ещё {0} позиций — полный список в Excel",
+            // {0} — кол-во проверенных товаров
+            ["report.card.clean"] = "✅ Потерь и брака не найдено — проверено {0} товаров, всё чисто",
+
             // --- Бот: приветствие и язык ---
             ["bot.chooseLanguage"] = "Выберите язык / Tilni tanlang:",
             ["bot.langSet"] = "Язык установлен: русский.",
@@ -109,6 +127,17 @@ public static class Loc
             ["report.shop"] = "Do'kon",
             ["report.date"] = "Sana",
             ["report.total"] = "JAMI",
+
+            // Карточный отчёт.
+            ["report.card.owed"] = "💰 Uzum sizga qarzdor: {0} so'mgacha",
+            ["report.card.minByPurchase"] = "Shundan xarid bilan tasdiqlangan: {0} so'm",
+            ["report.card.header"] = "🏪 {0} · {1} · {2} ta tovar tekshirildi",
+            ["report.card.missing"] = "❌ yo'qolgan {0}",
+            ["report.card.defected"] = "⚠️ nuqson {0}",
+            ["report.card.sum"] = "≈ {0} so'm",
+            ["report.card.linePurchase"] = "   xarid: ≈ {0} so'm",
+            ["report.card.more"] = "…va yana {0} ta pozitsiya — to'liq ro'yxat Excelda",
+            ["report.card.clean"] = "✅ Yo'qotish va nuqson topilmadi — {0} ta tovar tekshirildi, hammasi toza",
 
             ["bot.chooseLanguage"] = "Tilni tanlang / Выберите язык:",
             ["bot.langSet"] = "Til o'rnatildi: o'zbekcha.",
