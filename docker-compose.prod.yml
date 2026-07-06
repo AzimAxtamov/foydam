@@ -1,0 +1,83 @@
+# Production-инфраструктура SellerTools. Все секреты — через .env (см. .env.example).
+#   docker compose -f docker-compose.prod.yml up -d --build
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sellertools-app
+    container_name: sellertools-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      # Строка подключения (host=postgres — имя сервиса в сети compose).
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      # Секреты приложения — только через env.
+      Bot__Token: "${BOT_TOKEN}"
+      Crypto__KeyBase64: "${CRYPTO_KEY_BASE64}"
+      Admin__ChatId: "${ADMIN_CHAT_ID}"
+      UzumApi__Mode: "${UZUM_API_MODE:-Real}"
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      # curl ставится в рантайм-образе (см. Dockerfile). /health проверяет БД.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  postgres:
+    image: postgres:16
+    container_name: sellertools-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB}"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Порт наружу НЕ публикуем — доступ только внутри сети compose.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: sellertools-redis
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backup:
+    image: postgres:16
+    container_name: sellertools-backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: "${POSTGRES_DB}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
+      BACKUP_KEEP_DAYS: "14"
+      BACKUP_INTERVAL_SECONDS: "86400"
+    volumes:
+      - ./deploy/backup.sh:/backup.sh:ro
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "/backup.sh"]
+
+volumes:
+  pgdata:
+  redisdata:

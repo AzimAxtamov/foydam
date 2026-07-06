@@ -1,0 +1,15 @@
+# Сборочный мусор
+**/bin/
+**/obj/
+# Секреты и локальные конфиги — в образ НЕ кладём (передаём через env)
+**/appsettings.Secrets.json
+**/appsettings.Local.json
+.env
+# Прочее
+.git/
+.vs/
+.idea/
+.vscode/
+logs/
+*.md
+!README.md

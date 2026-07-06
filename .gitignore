@@ -14,3 +14,7 @@ secrets.json
 # Rider / VS Code
 .idea/
 .vscode/
+
+# Runtime-артефакты prod (не в git)
+logs/
+backups/

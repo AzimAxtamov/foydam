@@ -24,6 +24,8 @@
     <PackageReference Include="Hangfire.PostgreSql" Version="1.21.*" />
     <!-- Excel-выгрузки (потеряшки, товары+ИКПУ) -->
     <PackageReference Include="ClosedXML" Version="0.105.*" />
+    <!-- Structured-логи в файл с ротацией (prod) -->
+    <PackageReference Include="Serilog.AspNetCore" Version="8.*" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,6 +35,7 @@
 
   <ItemGroup>
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="appsettings.Production.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- Секреты: копируются в вывод, но не в git (см. .gitignore) -->
     <None Update="appsettings.Secrets.json" CopyToOutputDirectory="PreserveNewest"
           Condition="Exists('appsettings.Secrets.json')" />

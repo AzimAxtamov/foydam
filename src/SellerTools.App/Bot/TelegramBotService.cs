@@ -28,6 +28,7 @@ public class TelegramBotService : IHostedService, IUpdateHandler
     private readonly BotOptions _options;
     private readonly IServiceScopeFactory _scopes;
     private readonly ConversationStore _store;
+    private readonly IAdminAlertService _alerts;
     private readonly ILogger<TelegramBotService> _log;
 
     private ITelegramBotClient? _bot;
@@ -37,11 +38,13 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         IOptions<BotOptions> options,
         IServiceScopeFactory scopes,
         ConversationStore store,
+        IAdminAlertService alerts,
         ILogger<TelegramBotService> log)
     {
         _options = options.Value;
         _scopes = scopes;
         _store = store;
+        _alerts = alerts;
         _log = log;
     }
 
@@ -100,6 +103,8 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         {
             // Никогда не роняем поллинг из-за одного апдейта.
             _log.LogError(ex, "Ошибка обработки апдейта {UpdateId}", update.Id);
+            await _alerts.AlertAsync(AlertKind.UnhandledError,
+                $"Ошибка обработки апдейта {update.Id}: {ex.Message}", ct);
         }
     }
 

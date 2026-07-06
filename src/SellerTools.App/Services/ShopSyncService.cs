@@ -22,6 +22,7 @@ public class ShopSyncService
     private readonly IUzumApiClient _api;
     private readonly AppDbContext _db;
     private readonly ICryptoService _crypto;
+    private readonly IAdminAlertService _alerts;
     private readonly UzumApiOptions _options;
     private readonly ILogger<ShopSyncService> _log;
 
@@ -29,12 +30,14 @@ public class ShopSyncService
         IUzumApiClient api,
         AppDbContext db,
         ICryptoService crypto,
+        IAdminAlertService alerts,
         IOptions<UzumApiOptions> options,
         ILogger<ShopSyncService> log)
     {
         _api = api;
         _db = db;
         _crypto = crypto;
+        _alerts = alerts;
         _options = options.Value;
         _log = log;
     }
@@ -143,6 +146,9 @@ public class ShopSyncService
                 "Магазин {ShopId}: остаток дневного лимита {Remaining}/{Limit} ({Pct:P0}) " +
                 "ниже порога {Threshold:P0} — пауза {Pause}мс.",
                 shopId, remaining, limit, ratio, _options.RateLimitPauseThreshold, _options.RateLimitPauseMs);
+            await _alerts.AlertAsync(AlertKind.RateLimitLow,
+                $"Магазин {shopId}: остаток дневного лимита {remaining}/{limit} ({ratio:P0}) " +
+                $"ниже порога {_options.RateLimitPauseThreshold:P0}. Синк поставлен на паузу.", ct);
             await Task.Delay(_options.RateLimitPauseMs, ct);
         }
     }

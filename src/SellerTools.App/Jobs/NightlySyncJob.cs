@@ -15,12 +15,15 @@ public class NightlySyncJob
 {
     private readonly AppDbContext _db;
     private readonly ShopSyncService _sync;
+    private readonly IAdminAlertService _alerts;
     private readonly ILogger<NightlySyncJob> _log;
 
-    public NightlySyncJob(AppDbContext db, ShopSyncService sync, ILogger<NightlySyncJob> log)
+    public NightlySyncJob(
+        AppDbContext db, ShopSyncService sync, IAdminAlertService alerts, ILogger<NightlySyncJob> log)
     {
         _db = db;
         _sync = sync;
+        _alerts = alerts;
         _log = log;
     }
 
@@ -47,9 +50,11 @@ public class NightlySyncJob
             else
             {
                 failed++;
-                // Изоляция: логируем и идём дальше.
+                // Изоляция: логируем, алертим админа и идём дальше.
                 _log.LogWarning(
                     "✗ Магазин {ShopId}: синк не удался — {Error}", result.ShopId, result.Error);
+                await _alerts.AlertAsync(AlertKind.SyncFailed,
+                    $"Ночной синк магазина {result.ShopId} не удался: {result.Error}", ct);
             }
         }
 

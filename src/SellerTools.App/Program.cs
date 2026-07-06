@@ -3,11 +3,13 @@ using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Serilog;
 using SellerTools.App;
 using SellerTools.App.Bot;
 using SellerTools.App.Configuration;
@@ -39,12 +41,14 @@ builder.Configuration.AddJsonFile(
     Path.Combine(AppContext.BaseDirectory, "appsettings.Secrets.json"),
     optional: true, reloadOnChange: false);
 
-builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
-builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
-builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-builder.Logging.AddFilter("Hangfire", LogLevel.Information);
+// Serilog: конфиг из appsettings (уровни, sinks — консоль + файл с ротацией).
+builder.Host.UseSerilog((ctx, cfg) => cfg.ReadFrom.Configuration(ctx.Configuration));
 
 RegisterSharedServices(builder.Services, builder.Configuration, conn);
+
+// Health-check для healthcheck контейнера (проверяет доступность БД).
+builder.Services.AddScoped<DbHealthCheck>();
+builder.Services.AddHealthChecks().AddCheck<DbHealthCheck>("postgres");
 
 // Hangfire: хранилище в PostgreSQL.
 builder.Services.AddHangfire(cfg => cfg
@@ -60,12 +64,31 @@ builder.Services.AddHostedService<TelegramBotService>();
 
 var app = builder.Build();
 
+// Глобальные необработанные исключения → лог + алерт админу.
+var alerts = app.Services.GetRequiredService<IAdminAlertService>();
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    var ex = e.ExceptionObject as Exception;
+    Log.Fatal(ex, "Необработанное исключение (AppDomain)");
+    try { alerts.AlertAsync(AlertKind.UnhandledError, $"AppDomain: {ex?.Message}").GetAwaiter().GetResult(); }
+    catch { /* алерт не должен падать */ }
+};
+TaskScheduler.UnobservedTaskException += (_, e) =>
+{
+    Log.Error(e.Exception, "Необработанное исключение в задаче (UnobservedTaskException)");
+    try { alerts.AlertAsync(AlertKind.UnhandledError, $"Task: {e.Exception.Message}").GetAwaiter().GetResult(); }
+    catch { /* игнор */ }
+    e.SetObserved();
+};
+
 // Схема БД до старта.
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.EnsureCreatedAsync();
 }
+
+app.MapHealthChecks("/health");
 
 // Дашборд Hangfire — ТОЛЬКО в Development.
 if (app.Environment.IsDevelopment())
@@ -84,7 +107,20 @@ app.Services.GetRequiredService<IRecurringJobManager>().AddOrUpdate<NightlySyncJ
     "0 3 * * *",
     new RecurringJobOptions { TimeZone = tashkent });
 
-await app.RunAsync();
+try
+{
+    Log.Information("SellerTools запускается (env={Env})", app.Environment.EnvironmentName);
+    await app.RunAsync();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Хост упал при запуске");
+    throw;
+}
+finally
+{
+    Log.CloseAndFlush();
+}
 
 // --- Локальные функции ---
 
@@ -117,7 +153,9 @@ static void RegisterSharedServices(IServiceCollection services, IConfiguration c
 
     services.Configure<BotOptions>(config.GetSection(BotOptions.SectionName));
     services.Configure<CryptoOptions>(config.GetSection(CryptoOptions.SectionName));
+    services.Configure<AdminOptions>(config.GetSection(AdminOptions.SectionName));
 
+    services.AddSingleton<IAdminAlertService, AdminAlertService>();
     services.AddSingleton<ICryptoService, AesCryptoService>();
     services.AddSingleton<ConversationStore>();
     services.AddScoped<SellerService>();
