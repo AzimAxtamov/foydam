@@ -30,13 +30,38 @@ docker compose version
 
 Ожидаемо: обе команды печатают версии без ошибок.
 
-## 3. Клонировать репозиторий
+## 3. Клонировать репозиторий (через SSH)
+
+Репозиторий **приватный**, а GitHub с 2021 г. **не принимает пароль** при
+клонировании по HTTPS (ошибка `Password authentication is not supported`).
+Поэтому клонируем по SSH — настраивается один раз, дальше без паролей.
 
 ```bash
 # git обычно уже есть; если нет: sudo apt install -y git
-git clone https://github.com/AzimAxtamov/foydam.git
+
+# 3.1. Сгенерировать SSH-ключ (Enter на все вопросы — без пароля на ключ):
+ssh-keygen -t ed25519 -C "vps-foydam" -f ~/.ssh/id_ed25519 -N ""
+
+# 3.2. Показать публичный ключ — скопировать ВЕСЬ вывод:
+cat ~/.ssh/id_ed25519.pub
+```
+
+3.3. Добавить ключ в GitHub: открой <https://github.com/settings/ssh/new>,
+Title — `foydam-vps`, Key — вставь скопированное, **Add SSH key**.
+
+```bash
+# 3.4. Проверить связь (на "Are you sure..." набери yes):
+ssh -T git@github.com
+# Ожидаемо: Hi AzimAxtamov! You've successfully authenticated...
+
+# 3.5. Клонировать по SSH-адресу (git@, НЕ https):
+git clone git@github.com:AzimAxtamov/foydam.git
 cd foydam
 ```
+
+> Альтернатива без SSH: создать Personal Access Token на
+> <https://github.com/settings/tokens> (scope `repo`) и ввести его **вместо
+> пароля** при `git clone https://github.com/AzimAxtamov/foydam.git`.
 
 ## 4. Заполнить секреты (.env)
 
