@@ -83,11 +83,14 @@ jobs:
           script: |
             set -e
             cd ~/foydam
+            # Обновляем файлы репозитория (compose, Dockerfile, скрипты) до этого
+            # коммита. Без этого VPS работал бы со старым docker-compose.prod.yml.
+            # .env, logs/, backups/ — в .gitignore (untracked), reset их НЕ трогает.
+            git fetch --depth 1 origin main
+            git reset --hard origin/main
             # Логин в GHCR, чтобы тянуть приватный образ.
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            # Надёжно прописываем образ этого коммита в .env: удаляем старую строку
-            # APP_IMAGE (если была) и дописываем новую. compose читает .env всегда,
-            # независимо от версии и приоритета shell-переменных.
+            # Образ этого коммита прописываем в .env (compose читает его всегда).
             touch .env
             sed -i '/^APP_IMAGE=/d' .env
             echo "APP_IMAGE=$APP_IMAGE" >> .env
