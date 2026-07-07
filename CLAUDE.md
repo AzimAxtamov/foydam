@@ -1,5 +1,15 @@
 # CLAUDE.md — контекст проекта
 
+> **Текущее состояние (обновлять после каждого вечера!).**
+> Сделаны вечера **В1, В3, В4, В5, В7** (см. Роадмап). Работает: Telegram-бот
+> (@foydam_bot) с приёмом ключа, авто-определением магазина, карточным отчётом,
+> двумя Excel-выгрузками, кнопкой «Обновить»; ночной синк снапшотов на Hangfire;
+> production-обвязка (Docker, бэкапы, админ-алерты, Serilog) с `DEPLOY.md`.
+> **Открыто:** В2 (нужен живой read-only ключ — единица денег, доступ к
+> `finance/*`, лимиты, глубина истории), В6 (беты на живых селлерах), деплой на
+> реальный VPS. По умолчанию `UzumApi:Mode=Mock` — на живой API ещё не ходили.
+> Репозиторий приватный: `AzimAxtamov/foydam`, клон по SSH.
+
 ## Что мы строим
 
 Telegram-бот для селлеров маркетплейса Uzum Market (Узбекистан). Работаем через
@@ -332,40 +342,80 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 ## Архитектура
 
 - **.NET 8**, PostgreSQL (Npgsql + EF Core), Redis (задел, пока не используется),
-  Hangfire (вечер №4), Telegram.Bot (вечер №3). Версии пакетов — плавающие `8.*`.
+  Hangfire (Postgres-storage), Telegram.Bot (v22), ClosedXML (Excel), Serilog.
+  Версии пакетов — плавающие `8.*` (кроме Telegram.Bot `22.*`, ClosedXML `0.105.*`,
+  Hangfire.PostgreSql `1.21.*`).
 - Проекты:
-  - `SellerTools.Core` — сущности домена, без зависимостей.
+  - `SellerTools.Core` — сущности домена + модель отчёта, без зависимостей.
   - `SellerTools.UzumApi` — DTO, `IUzumApiClient`, реальный клиент (HttpClient,
-    обработка rate-limit заголовков, ретраи), `MockUzumApiClient` (детерминированный,
-    seed; ~25 SKU с узбекско-русскими названиями, у 5–7 есть missing/defected).
-  - `SellerTools.App` — хост: DI, EF, джобы, бот.
+    rate-limit заголовки, ретраи 429/5xx, `ProbeAsync` для diag), `MockUzumApiClient`
+    (детерминированный, seed; ~25 SKU с узбекско-русскими названиями, у 6 missing/defected).
+  - `SellerTools.App` — хост (WebApplication для дашборда), DI, EF, бот, джобы,
+    Excel, шифрование, алерты, диагностика.
 - Сущности: `Seller` (Id = Telegram user id, Language ru|uz),
-  `Shop` (Id = Uzum shopId, ApiKeyEncrypted, KeyExpiresAt),
+  `Shop` (Id = Uzum shopId, ApiKeyEncrypted, KeyExpiresAt, Title),
   `SkuDailySnapshot` (**ров данных**: ежедневный срез quantityMissing/Defected/…
   по каждому SKU — API истории не отдаёт, копим сами; уникальный индекс
   ShopId+Date+SkuId), `SyncCursor` (ShopId+Kind составной ключ).
 - Режим API: `UzumApi:Mode = Mock | Real` в appsettings.
 - Деньги: `long`. Мок — детерминированный (фиксированный seed).
 
+### Режимы запуска (первый аргумент)
+
+- `bot` (по умолчанию) — WebApplication: Telegram long polling + Hangfire-сервер;
+  `/health`; дашборд `/hangfire` только в Development.
+- `diag <shopId> <apiKey>` — консольная диагностика: три GET-эндпоинта + проверка
+  обоих base-path, печатает статусы/rate-limit/тело. Инструмент для В2.
+- `smoke` — отчёт по мок-магазину + снапшоты (наследие В1).
+
+### Production (В7)
+
+- `Dockerfile` (multi-stage: SDK build → aspnet runtime, `InvariantGlobalization`,
+  curl для healthcheck), `.dockerignore`.
+- `docker-compose.prod.yml`: `app` + `postgres` + `redis` + `backup`. Секреты —
+  через `.env` (см. `.env.example`): `BOT_TOKEN`, `CRYPTO_KEY_BASE64`,
+  `ADMIN_CHAT_ID`, `POSTGRES_PASSWORD`, `UZUM_API_MODE`. Порт Postgres наружу НЕ
+  публикуется. У всех сервисов healthcheck, `restart: unless-stopped`.
+- Бэкап: `deploy/backup.sh` (контейнер `backup` на образе postgres) — `pg_dump`
+  раз в сутки в `./backups`, ротация 14 дней. Снапшоты — главный актив.
+- Алерты: `IAdminAlertService` шлёт админу (`Admin:ChatId`) в Telegram при сбое
+  синка магазина, необработанном исключении, остатке дневного лимита <10%.
+  Троттлинг раз в 10 мин на тип. Свой `TelegramBotClient`, ошибки отправки глушит.
+- Логи: Serilog (секция `Serilog` в appsettings) — консоль + файл `logs/` с
+  ротацией по дням (14 файлов). `appsettings.Production.json` — prod-уровни.
+- ⚠️ **Грабли Postgres:** `POSTGRES_PASSWORD` применяется только при ПЕРВОЙ
+  инициализации пустого тома. Смена пароля в `.env` на существующем томе →
+  `password authentication failed`. Лечится `down -v` (стирает данные!) либо
+  `ALTER USER … PASSWORD`. Описано в DEPLOY.md.
+- Деплой на VPS — по `DEPLOY.md` (клон по SSH: репо приватный, GitHub не
+  принимает пароль по HTTPS).
+
 ## Роадмап по вечерам
 
-- **В1 (СДЕЛАТЬ СЕЙЧАС):** solution из 3 проектов, docker-compose (postgres:16,
+- **В1 (СДЕЛАНО):** solution из 3 проектов, docker-compose (postgres:16,
   redis:7), EF-модели + EnsureCreated, DTO, IUzumApiClient + реальный клиент +
   мок, сервис расчёта потеряшек, smoke-тест как IHostedService.
-  **Definition of done:** `docker compose up -d && dotnet run --project
-  src/SellerTools.App` → в консоли отчёт «Сколько Uzum вам должен» по мок-магазину
-  (таблица SKU: потеряно/брак/суммы + итоги двумя оценками), в Postgres — строки
-  снапшотов за сегодня. Сборка без ошибок, README с этими командами.
-- **В2:** живой ключ — прогон реального клиента, фикс типов по чек-листу
-  «Неизвестное», добавление полей дат в DTO.
-- **В3:** Telegram-бот (long polling): /start, выбор языка RU/UZ, приём ключа
-  (немедленно удалять сообщение с ключом), AES-шифрование ключа, привязка Shop.
-- **В4:** Hangfire + ночной синк снапшотов по всем магазинам; отчёт по команде.
+- **В2 (ЧАСТИЧНО / ОТКРЫТ):** авторизация и shopId закрыты спекой; форматы дат
+  разобраны. **Осталось живым read-only ключом:** единица денег (сум/тийин),
+  доступ к `finance/*`, реальные значения лимитов, глубина истории, канонический
+  base-path (см. чек-лист «Неизвестное»). Инструмент проверки — режим `diag`.
+- **В3 (СДЕЛАНО):** Telegram-бот (long polling): /start, выбор языка RU/UZ, приём
+  ключа (сообщение сразу удаляется), AES-шифрование ключа, привязка Shop.
+  Авто-определение магазина по ключу через `GET /v1/shops` (shopId не спрашиваем).
+- **В4 (СДЕЛАНО):** Hangfire (хранилище в Postgres) + ночной синк снапшотов 03:00
+  Asia/Tashkent, изоляция ошибок по магазину, rate-limit пауза; кнопка «Отчёт».
+  Дашборд `/hangfire` — только в Development.
 - **В5 (СДЕЛАНО):** карточный отчёт в боте + Excel-экспорт (ClosedXML): «Потеряшки
   в Excel» (числа числовыми ячейками, итоги формулой SUM) и «Товары + ИКПУ» (для
   ЭТТН). Кнопка «Обновить данные» с троттлингом 30 мин. UZ доведён до 100% (черновой).
-- **В6:** беты на живых селлерах, фиксы.
-- **В7:** деплой на VPS (docker), логи/алерты об ошибках.
+- **В6 (НЕ НАЧАТ):** беты на живых селлерах, фиксы.
+- **В7 (СДЕЛАНО):** production-деплой. Multi-stage `Dockerfile`,
+  `docker-compose.prod.yml` (app+postgres+redis+backup, секреты через `.env`,
+  restart:unless-stopped, healthchecks). Бэкап Postgres `pg_dump` раз в сутки в
+  `./backups`, ротация 14 дней (`deploy/backup.sh`). Админ-алерты в Telegram
+  (сбой синка / необработанное исключение / лимит <10%, троттл 10 мин/тип).
+  Serilog в файл с ротацией. Health `/health`. `DEPLOY.md` — пошагово от чистого
+  Ubuntu VPS (клон по SSH — приватный репо, HTTPS-пароль GitHub не принимает).
 
 ## Правила работы
 
@@ -374,4 +424,8 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 - Секреты (ключи селлеров, токен бота) — только через конфиг/env, не в коде,
   не в логах, не в git.
 - Комментарии и коммиты — по-русски, кратко.
-- После каждого вечера — git commit.
+- После каждого вечера — git commit **И обновление CLAUDE.md**: блок «Текущее
+  состояние» вверху + пометка вечера в Роадмапе + новые артефакты/решения в
+  Архитектуре. Контекст проекта живёт в CLAUDE.md и git-истории, а не в сессии:
+  `git clone` + Claude Code в папке проекта на любой машине должны дать полное
+  понимание состояния. Если чего-то нет в CLAUDE.md — это дефект, чинить сразу.
