@@ -86,10 +86,11 @@ jobs:
             cd ~/foydam
             # Логин в GHCR, чтобы тянуть приватный образ.
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            # Образ этого коммита прописываем в .env (переопределяет APP_IMAGE).
-            grep -q '^APP_IMAGE=' .env && sed -i "s#^APP_IMAGE=.*#APP_IMAGE=$APP_IMAGE#" .env || echo "APP_IMAGE=$APP_IMAGE" >> .env
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d
+            # APP_IMAGE (образ этого коммита) передаём инлайн прямо в compose —
+            # надёжнее правки .env: compose подставит его в ${APP_IMAGE:-...}.
+            echo "Разворачиваю образ: $APP_IMAGE"
+            APP_IMAGE="$APP_IMAGE" docker compose -f docker-compose.prod.yml pull
+            APP_IMAGE="$APP_IMAGE" docker compose -f docker-compose.prod.yml up -d
             docker image prune -f
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
