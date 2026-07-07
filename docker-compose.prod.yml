@@ -2,10 +2,12 @@
 #   docker compose -f docker-compose.prod.yml up -d --build
 services:
   app:
+    # На VPS образ тянется из GHCR (APP_IMAGE в .env задаёт CI-деплой).
+    # Локально без APP_IMAGE — фолбэк на локальную сборку (up -d --build).
+    image: ${APP_IMAGE:-sellertools-app}
     build:
       context: .
       dockerfile: Dockerfile
-    image: sellertools-app
     container_name: sellertools-app
     restart: unless-stopped
     depends_on:

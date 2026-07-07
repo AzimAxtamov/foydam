@@ -380,8 +380,14 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
   curl для healthcheck), `.dockerignore`.
 - `docker-compose.prod.yml`: `app` + `postgres` + `redis` + `backup`. Секреты —
   через `.env` (см. `.env.example`): `BOT_TOKEN`, `CRYPTO_KEY_BASE64`,
-  `ADMIN_CHAT_ID`, `POSTGRES_PASSWORD`, `UZUM_API_MODE`. Порт Postgres наружу НЕ
-  публикуется. У всех сервисов healthcheck, `restart: unless-stopped`.
+  `ADMIN_CHAT_ID`, `POSTGRES_PASSWORD`, `UZUM_API_MODE`, `APP_IMAGE`. Порт Postgres
+  наружу НЕ публикуется. У всех сервисов healthcheck, `restart: unless-stopped`.
+  `app.image=${APP_IMAGE:-sellertools-app}` — на VPS тянется из GHCR, локально
+  фолбэк на сборку из Dockerfile.
+- CI/CD: `.github/workflows/deploy.yml` — на push в `main`: `dotnet build+test`
+  (гейт, падает до образа) → build+push образа в GHCR → SSH на VPS
+  `docker compose pull && up -d`. Секреты GitHub: `HOST`, `USER`, `SSH_KEY`
+  (GHCR-логин на VPS — встроенным `GITHUB_TOKEN`). Первый деплой — руками по DEPLOY.md.
 - Бэкап: `deploy/backup.sh` (контейнер `backup` на образе postgres) — `pg_dump`
   раз в сутки в `./backups`, ротация 14 дней. Снапшоты — главный актив.
 - Алерты: `IAdminAlertService` шлёт админу (`Admin:ChatId`) в Telegram при сбое

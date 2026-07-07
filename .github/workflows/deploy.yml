@@ -1,0 +1,93 @@
+name: CI/CD
+
+# На push в main: сборка+тесты → Docker-образ в GHCR → деплой на VPS по SSH.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}   # можно запустить вручную из вкладки Actions
+
+env:
+  # Образ в GHCR. github.repository = owner/repo; GHCR требует нижний регистр —
+  # приводим в шаге build-and-deploy (переменная IMAGE).
+  REGISTRY: ghcr.io
+
+jobs:
+  # 1) Сборка и тесты. Падение здесь останавливает пайплайн ДО сборки образа/деплоя.
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore SellerTools.sln
+
+      - name: Build (Release)
+        run: dotnet build SellerTools.sln -c Release --no-restore
+
+      - name: Test
+        # Прогоняет все тест-проекты решения (сейчас их нет — шаг проходит вхолостую,
+        # но остаётся гейтом на будущее). --no-build: используем уже собранное.
+        run: dotnet test SellerTools.sln -c Release --no-build --verbosity normal
+
+  # 2) Образ в GHCR + деплой на VPS. Стартует ТОЛЬКО если build-test прошёл.
+  deploy:
+    needs: build-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # push образа в GHCR
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Собрать имя образа (нижний регистр)
+        id: img
+        run: echo "image=${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Логин в GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push образа
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ steps.img.outputs.image }}:latest
+            ${{ steps.img.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Деплой на VPS по SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          # Пробрасываем в SSH-сессию переменные для docker login и compose.
+          envs: GHCR_TOKEN,GHCR_USER,APP_IMAGE
+          script_stop: true   # любая команда с ненулевым кодом → шаг падает
+          script: |
+            set -e
+            cd ~/foydam
+            # Логин в GHCR, чтобы тянуть приватный образ.
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            # Образ этого коммита прописываем в .env (переопределяет APP_IMAGE).
+            grep -q '^APP_IMAGE=' .env && sed -i "s#^APP_IMAGE=.*#APP_IMAGE=$APP_IMAGE#" .env || echo "APP_IMAGE=$APP_IMAGE" >> .env
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d
+            docker image prune -f
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          # Разворачиваем именно образ этого коммита (иммутабельный тег по SHA).
+          APP_IMAGE: ${{ steps.img.outputs.image }}:${{ github.sha }}
