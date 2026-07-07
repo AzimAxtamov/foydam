@@ -80,17 +80,20 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           # Пробрасываем в SSH-сессию переменные для docker login и compose.
           envs: GHCR_TOKEN,GHCR_USER,APP_IMAGE
-          script_stop: true   # любая команда с ненулевым кодом → шаг падает
           script: |
             set -e
             cd ~/foydam
             # Логин в GHCR, чтобы тянуть приватный образ.
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            # APP_IMAGE (образ этого коммита) передаём инлайн прямо в compose —
-            # надёжнее правки .env: compose подставит его в ${APP_IMAGE:-...}.
+            # Надёжно прописываем образ этого коммита в .env: удаляем старую строку
+            # APP_IMAGE (если была) и дописываем новую. compose читает .env всегда,
+            # независимо от версии и приоритета shell-переменных.
+            touch .env
+            sed -i '/^APP_IMAGE=/d' .env
+            echo "APP_IMAGE=$APP_IMAGE" >> .env
             echo "Разворачиваю образ: $APP_IMAGE"
-            APP_IMAGE="$APP_IMAGE" docker compose -f docker-compose.prod.yml pull
-            APP_IMAGE="$APP_IMAGE" docker compose -f docker-compose.prod.yml up -d
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d
             docker image prune -f
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
