@@ -83,6 +83,7 @@ jobs:
           script: |
             set -e
             cd ~/foydam
+            COMPOSE="docker compose -f docker-compose.prod.yml"
             # Обновляем файлы репозитория (compose, Dockerfile, скрипты) до этого
             # коммита. Без этого VPS работал бы со старым docker-compose.prod.yml.
             # .env, logs/, backups/ — в .gitignore (untracked), reset их НЕ трогает.
@@ -95,9 +96,27 @@ jobs:
             sed -i '/^APP_IMAGE=/d' .env
             echo "APP_IMAGE=$APP_IMAGE" >> .env
             echo "Разворачиваю образ: $APP_IMAGE"
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d
+
+            # Бэкап ПЕРЕД обновлением (страховка для отката). Best-effort: не валим
+            # деплой, если Postgres ещё не поднят (первый деплой) — только warning.
+            echo "== Бэкап перед деплоем =="
+            $COMPOSE run --rm -e BACKUP_ONESHOT=1 backup || echo "ВНИМАНИЕ: бэкап не сделан (первый деплой?) — продолжаю"
+
+            $COMPOSE pull
+            $COMPOSE up -d
             docker image prune -f
+
+            # Health-гейт: ждём healthy у app до 60с, иначе джоба падает.
+            echo "== Ожидание healthy у sellertools-app (до 60с) =="
+            for i in $(seq 1 20); do
+              status=$(docker inspect -f '{{.State.Health.Status}}' sellertools-app 2>/dev/null || echo "no-container")
+              echo "  [$((i*3))с] health=$status"
+              [ "$status" = "healthy" ] && { echo "app healthy — деплой ок"; exit 0; }
+              sleep 3
+            done
+            echo "ОШИБКА: app не стал healthy за 60с. Логи:"
+            $COMPOSE logs --tail=50 app || true
+            exit 1
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}

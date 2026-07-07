@@ -9,6 +9,7 @@ set -eu
 : "${BACKUP_DIR:=/backups}"
 : "${BACKUP_KEEP_DAYS:=14}"
 : "${BACKUP_INTERVAL_SECONDS:=86400}"   # раз в сутки
+: "${BACKUP_ONESHOT:=0}"                # 1 → один бэкап и выход (для деплоя)
 
 mkdir -p "$BACKUP_DIR"
 echo "[backup] старт: host=$POSTGRES_HOST db=$POSTGRES_DB dir=$BACKUP_DIR keep=${BACKUP_KEEP_DAYS}д interval=${BACKUP_INTERVAL_SECONDS}с"
@@ -31,6 +32,12 @@ do_backup() {
 
 # Первый бэкап — сразу после старта (чтобы не ждать сутки на свежем деплое).
 do_backup
+
+# Oneshot: один дамп и выход (используется деплоем перед обновлением).
+if [ "$BACKUP_ONESHOT" = "1" ]; then
+  echo "[backup] oneshot — выходим"
+  exit 0
+fi
 
 while true; do
   sleep "$BACKUP_INTERVAL_SECONDS"
