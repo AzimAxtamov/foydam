@@ -18,6 +18,9 @@ public interface IAdminAlertService
 {
     /// <summary>Шлёт алерт админу в Telegram. Троттлится по типу. Никогда не бросает.</summary>
     Task AlertAsync(AlertKind kind, string message, CancellationToken ct = default);
+
+    /// <summary>Сырое сообщение админу без троттлинга и без префикса. Никогда не бросает.</summary>
+    Task SendRawToAdminAsync(string message, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -70,6 +73,20 @@ public class AdminAlertService : IAdminAlertService
         {
             // Не смогли отправить алерт — только в лог, наружу не бросаем.
             _log.LogWarning("Не удалось отправить админ-алерт ({Kind}): {Msg}", kind, ex.Message);
+        }
+    }
+
+    public async Task SendRawToAdminAsync(string message, CancellationToken ct = default)
+    {
+        if (_bot is null)
+            return;
+        try
+        {
+            await _bot.SendMessage(_admin.ChatId, message, cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning("Не удалось отправить сырое сообщение админу: {Msg}", ex.Message);
         }
     }
 
