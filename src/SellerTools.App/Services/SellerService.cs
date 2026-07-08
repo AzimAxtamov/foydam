@@ -45,13 +45,32 @@ public class SellerService
 
     /// <summary>
     /// Привязывает магазин к селлеру: сохраняет shopId и зашифрованный ключ.
-    /// Если магазин уже есть — обновляет ключ и владельца.
+    /// Модель «один магазин на селлера»: любые ДРУГИЕ магазины этого селлера
+    /// отвязываются (со снапшотами и курсорами), чтобы новый выбор ЗАМЕНЯЛ старый.
+    /// Иначе после повторного /start бот брал бы shops[0] = первый (старый) магазин.
+    /// Тот же shopId — просто обновление ключа/имени.
     /// </summary>
     public async Task BindShopAsync(
         long sellerId, long shopId, string apiKeyPlain,
         string? title = null, DateTimeOffset? keyExpiresAt = null, CancellationToken ct = default)
     {
         await EnsureSellerAsync(sellerId, ct);
+
+        // Убираем прежние магазины этого селлера, кроме выбранного (чтобы не «залипал»
+        // старый выбор). Заодно чистим их снапшоты и курсоры — FK-каскада нет.
+        var oldShops = await _db.Shops
+            .Where(s => s.SellerId == sellerId && s.Id != shopId)
+            .Select(s => s.Id)
+            .ToListAsync(ct);
+        if (oldShops.Count > 0)
+        {
+            var snaps = _db.SkuDailySnapshots.Where(x => oldShops.Contains(x.ShopId));
+            _db.SkuDailySnapshots.RemoveRange(snaps);
+            var cursors = _db.SyncCursors.Where(x => oldShops.Contains(x.ShopId));
+            _db.SyncCursors.RemoveRange(cursors);
+            var shopsToRemove = _db.Shops.Where(s => oldShops.Contains(s.Id));
+            _db.Shops.RemoveRange(shopsToRemove);
+        }
 
         var encrypted = _crypto.Encrypt(apiKeyPlain);
 
