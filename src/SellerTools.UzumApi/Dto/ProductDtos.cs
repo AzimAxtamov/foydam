@@ -3,8 +3,10 @@ using System.Text.Json.Serialization;
 namespace SellerTools.UzumApi.Dto;
 
 // DTO для GET /v1/product/shop/{shopId}.
-// Только поля, подтверждённые в swagger (см. CLAUDE.md). Лишнее не выдумываем.
-// Деньги — long (единицы уточнить живым ключом, В2).
+// ⚠️ [ЖИВОЙ КЛЮЧ В2] Многие числовые поля SKU приходят как null (purchasePrice,
+// paidStorage*, article, avgdsales) или как double (commission=19.5). Поэтому
+// JSON-поля НУЛЛАБЕЛЬНЫЕ (…Raw), а наружу отдаём не-null accessor'ы (?? 0), чтобы
+// STJ не падал JsonException на null→long / 19.5→long. Деньги = СУМ (подтверждено).
 
 public class ProductShopResponse
 {
@@ -67,25 +69,29 @@ public class SkuDto
     [JsonPropertyName("quantityDefected")]
     public int QuantityDefected { get; set; }
 
-    /// <summary>Цена продажи (long — единицы уточнить, В2).</summary>
+    /// <summary>Цена продажи (СУМ). API может вернуть null → отдаём 0.</summary>
     [JsonPropertyName("price")]
-    public long Price { get; set; }
+    public long? PriceRaw { get; set; }
+    [JsonIgnore] public long Price => PriceRaw ?? 0;
 
-    /// <summary>Закуп из ЛК — не доверять.</summary>
+    /// <summary>Закуп из ЛК (СУМ) — не доверять. Часто null → 0.</summary>
     [JsonPropertyName("purchasePrice")]
-    public long PurchasePrice { get; set; }
+    public long? PurchasePriceRaw { get; set; }
+    [JsonIgnore] public long PurchasePrice => PurchasePriceRaw ?? 0;
 
+    /// <summary>Комиссия — double (в живых данных это процент, напр. 19.5), может быть null.</summary>
     [JsonPropertyName("commission")]
-    public long Commission { get; set; }
+    public double? Commission { get; set; }
 
+    /// <summary>Плата за хранение (СУМ), может быть null.</summary>
     [JsonPropertyName("paidStorageAmount")]
-    public long PaidStorageAmount { get; set; }
+    public long? PaidStorageAmount { get; set; }
 
-    /// <summary>Средние дневные продажи.</summary>
+    /// <summary>Средние дневные продажи, может быть null.</summary>
     [JsonPropertyName("avgdsales")]
-    public double AvgDSales { get; set; }
+    public double? AvgDSales { get; set; }
 
-    /// <summary>ИКПУ-код (для ЭТТН).</summary>
+    /// <summary>ИКПУ-код (для ЭТТН). Строка — ведущие нули значимы.</summary>
     [JsonPropertyName("ikpu")]
     public string? Ikpu { get; set; }
 
@@ -95,8 +101,10 @@ public class SkuDto
     [JsonPropertyName("article")]
     public string? Article { get; set; }
 
+    /// <summary>Штрихкод (int64). Может быть null → отдаём 0.</summary>
     [JsonPropertyName("barcode")]
-    public long Barcode { get; set; }
+    public long? BarcodeRaw { get; set; }
+    [JsonIgnore] public long Barcode => BarcodeRaw ?? 0;
 
     [JsonPropertyName("archived")]
     public bool Archived { get; set; }

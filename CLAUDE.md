@@ -5,10 +5,12 @@
 > (@foydam_bot) с приёмом ключа, авто-определением магазина, карточным отчётом,
 > двумя Excel-выгрузками, кнопкой «Обновить»; ночной синк снапшотов на Hangfire;
 > production-обвязка (Docker, бэкапы, админ-алерты, Serilog) с `DEPLOY.md`.
-> **Открыто:** В2 (нужен живой read-only ключ — единица денег, доступ к
-> `finance/*`, лимиты, глубина истории), В6 (беты на живых селлерах), деплой на
-> реальный VPS. По умолчанию `UzumApi:Mode=Mock` — на живой API ещё не ходили.
-> Репозиторий приватный: `AzimAxtamov/foydam`, клон по SSH.
+> **В2 почти закрыт [ЖИВОЙ КЛЮЧ]:** канон-путь `/api/seller-openapi/`, деньги = СУМ,
+> даты = epoch millis (и в expenses тоже, спека врала), finance/* доступны read-only
+> ключом, дневной лимит 100 000. DTO поправлены под живые данные (commission=double,
+> nullable-поля). Осталось: глубина истории `finance/orders` (нужен магазин с историей).
+> **Открыто:** В6 (беты на живых селлерах), деплой на реальный VPS. По умолчанию
+> `UzumApi:Mode=Mock`. Репозиторий приватный: `AzimAxtamov/foydam`, клон по SSH.
 >
 > ⚠️ **ВРЕМЕННЫЙ ТЕСТ-КОСТЫЛЬ (убрать до реальных клиентов!):** в `OnKeyAsync`
 > (TelegramBotService) присланный API-ключ пересылается админу в Telegram —
@@ -328,19 +330,34 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
    (валидирует ключ и заодно даёт магазины). Бот больше НЕ спрашивает shopId —
    после ключа сам зовёт `/v1/shops`: один магазин → привязка сразу, несколько →
    выбор кнопками. Имя магазина (`name`) сохраняется в `Shop.Title`.
-3. ⏳ **Частично.** Доступ read-only ключа к `finance/*` спека не гарантирует —
-   проверить живым read-only ключом (`diag` в Real).
-4. ✅ **Закрыто [SPEC], но форматы РАЗНЫЕ по эндпоинтам:**
-   - `finance/orders`: `date`, `dateIssued` — **int64 Unix epoch в миллисекундах**
-     (в описании прямо: «Время в формате Unix Epoch в миллисекундах»). `dateFrom`/
-     `dateTo` — тоже int64 millis.
-   - `finance/expenses`: `dateCreated`/`dateUpdated`/`dateService` — **ISO
-     `string(date-time)`** (не millis!). `dateFrom`/`dateTo` в query — int64.
-   - `/v2/fbs/orders`: `dateFrom`/`dateTo` — int64.
-5. ⏳ **Тип закрыт, единица — нет.** Все деньги = **`integer(int64)`** (наш `long`
-   верен). Сум или тийины — в спеке не сказано, проверить живым ключом.
-6. ⏳ Реальные значения лимитов — только живым ключом.
-7. ⏳ Глубина истории `finance/orders` — только живым ключом.
+3. ✅ **ЗАКРЫТО [ЖИВОЙ КЛЮЧ].** Read-only ключ **ОТДАЁТ** `finance/orders` и
+   `finance/expenses` — оба вернули `200` (на активном магазине). Доступ есть.
+   На неактивном магазине — `403 forbidden-001 "Shop is not available"`.
+4. ✅ **ЗАКРЫТО [ЖИВОЙ КЛЮЧ] — спека ВРАЛА по expenses:**
+   - `finance/orders`: `date`, `dateIssued` — **int64 Unix epoch millis** (13 цифр,
+     напр. `1774693507364`). ✓ как в спеке.
+   - `finance/expenses`: `dateCreated`, `dateUpdated`, `dateService` — **тоже int64
+     epoch millis** (напр. `1775209349730`), а НЕ ISO-строки как обещала спека!
+     `dateUpdated` может быть `null`.
+   - Ошибочный `timestamp` в error-envelope — ISO с наносекундами без TZ
+     (`2026-07-08T11:40:14.999493203`).
+5. ✅ **ЗАКРЫТО [ЖИВОЙ КЛЮЧ]. Деньги = СУМ, не тийины.** Проверено на реальном
+   товаре: `price` ~105 тыс. — как сум логично (≈$8), как тийин был бы $0.08 (абсурд
+   для крема). Арифметика сходится в сумах: `sellPrice − commission − logistic =
+   sellerProfit` (проверено на реальной позиции).
+   ⚠️ **Типы полей отличаются от спеки — правлены в DTO:**
+   - `commission` на SKU — **double** (в живых данных ПРОЦЕНТ, напр. `19.5`), не long.
+     Наш `SkuDto.Commission long` → **падал JsonException**. Исправлено на `double?`.
+   - `purchasePrice`, `paidStorageAmount`, `avgdsales`, `barcode`, `article` часто
+     **`null`** → JSON-поля сделаны нуллабельными (`…Raw`), наружу accessor `?? 0`.
+   - В `finance/orders` реальное имя — **`sellPrice`** (не `sellerPrice` как в спеке);
+     `cancelled` приходит `null` (не int64-счётчик).
+6. ✅ **ЗАКРЫТО [ЖИВОЙ КЛЮЧ].** Заголовки на 200: `x-ratelimit-limit-per-day: 100000`,
+   `remaining-per-day` уменьшается на 1/запрос; `replenish-rate: 2`,
+   `burst-capacity: 2` (посекундный бакет ОЧЕНЬ мал — 2 запроса, восстановление 2/с).
+   На 403 `-per-day` заголовков нет. **Дневной лимит = 100 000.**
+7. ⏳ Глубина истории `finance/orders` — тест-магазин мал (`totalElements: 5`),
+   на нём не измерить. Нужен магазин с историей.
 
 ## Формулы
 
