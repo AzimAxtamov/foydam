@@ -13,3 +13,4 @@
 logs/
 *.md
 !README.md
+.secrets

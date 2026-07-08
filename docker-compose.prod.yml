@@ -15,6 +15,10 @@ services:
         condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      # Отключаем IPv6 в .NET: Contabo теряет IPv6-маршрут через несколько часов
+      # аптайма, резолвер отдаёт AAAA первым, .NET шёл по IPv6 → "network unreachable".
+      # curl молча фолбэчился на IPv4, поэтому диагностика curl'ом обманывала.
+      DOTNET_SYSTEM_NET_DISABLEIPV6: "1"
       # Строка подключения (host=postgres — имя сервиса в сети compose).
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
       # Секреты приложения — только через env.

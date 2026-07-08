@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Logging;
 using SellerTools.UzumApi;
 using SellerTools.UzumApi.Diagnostics;
 using SellerTools.UzumApi.Dto;
@@ -33,8 +34,23 @@ public record ShopDiscoveryResult(
 public class KeyVerification
 {
     private readonly IUzumApiClient _api;
+    private readonly ILogger<KeyVerification> _log;
 
-    public KeyVerification(IUzumApiClient api) => _api = api;
+    public KeyVerification(IUzumApiClient api, ILogger<KeyVerification> log)
+    {
+        _api = api;
+        _log = log;
+    }
+
+    // Разворачивает цепочку InnerException в читаемую строку (тип: сообщение → …).
+    // Ключ сюда попасть не может — логируем только типы/сообщения исключений и host.
+    private static string DescribeException(Exception ex)
+    {
+        var parts = new List<string>();
+        for (Exception? e = ex; e is not null; e = e.InnerException)
+            parts.Add($"{e.GetType().Name}: {e.Message}");
+        return string.Join(" → ", parts);
+    }
 
     public async Task<KeyCheckResult> CheckAsync(
         long shopId, string apiKey, CancellationToken ct = default)
@@ -86,12 +102,31 @@ public class KeyVerification
                 null => KeyCheckOutcome.Network, // соединение не состоялось
                 _ => KeyCheckOutcome.Unknown,
             };
+            // Детальный лог: без деталей ("Network HTTP null") стоил ночи отладки.
+            _log.LogWarning(
+                "Проверка ключа: HttpRequestException, host={Host}, httpStatus={Status}, errno={Errno}, цепочка={Chain}",
+                Host, code, ex.HttpRequestError, DescribeException(ex));
             return new ShopDiscoveryResult(outcome, code, Array.Empty<ShopDto>());
         }
-        catch (Exception)
+        catch (TaskCanceledException ex)
         {
-            // Таймаут, DNS, отмена сети и т.п.
+            // Таймаут (или отмена). У таймаута InnerException обычно TimeoutException.
+            _log.LogWarning(
+                "Проверка ключа: таймаут/отмена, host={Host}, цепочка={Chain}",
+                Host, DescribeException(ex));
+            return new ShopDiscoveryResult(KeyCheckOutcome.Network, null, Array.Empty<ShopDto>());
+        }
+        catch (Exception ex)
+        {
+            // Прочее (DNS, сокет, TLS). Логируем полный тип+цепочку+host.
+            _log.LogWarning(
+                "Проверка ключа: {Type}, host={Host}, цепочка={Chain}",
+                ex.GetType().Name, Host, DescribeException(ex));
             return new ShopDiscoveryResult(KeyCheckOutcome.Network, null, Array.Empty<ShopDto>());
         }
     }
+
+    // Хост целевого API (для логов). Ключ/секреты сюда не попадают.
+    private static string Host =>
+        Uri.TryCreate("https://api-seller.uzum.uz", UriKind.Absolute, out var u) ? u.Host : "api-seller.uzum.uz";
 }

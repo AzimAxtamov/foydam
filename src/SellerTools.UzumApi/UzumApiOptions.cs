@@ -16,7 +16,12 @@ public class UzumApiOptions
 
     public UzumApiMode Mode { get; set; } = UzumApiMode.Mock;
 
-    public string BaseUrl { get; set; } = "https://api-seller.uzum.uz";
+    /// <summary>
+    /// Канонический base-path подтверждён живым ключом: только `/api/seller-openapi/`
+    /// доходит до самого Seller API (даёт JSON-envelope). Путь без префикса режет
+    /// внешний шлюз ("RBAC: access denied"). Обязателен слеш в конце.
+    /// </summary>
+    public string BaseUrl { get; set; } = "https://api-seller.uzum.uz/api/seller-openapi/";
 
     /// <summary>
     /// Имя auth-заголовка. Подтверждено спекой (securitySchemes.TokenAuth): Authorization.
@@ -47,4 +52,13 @@ public class UzumApiOptions
 
     /// <summary>Длительность паузы (мс) при низком остатке дневного лимита.</summary>
     public int RateLimitPauseMs { get; set; } = 60_000;
+
+    /// <summary>
+    /// Время жизни соединения в пуле (сек). По истечении — соединение закрывается
+    /// и пересоздаётся. Защита от переиспользования «мёртвого» keep-alive: край Uzum
+    /// рвёт соединение после ответа, а .NET иначе держит его в пуле и падает
+    /// HttpRequestException на следующем запросе. 60с — компромисс (частые запросы
+    /// переиспользуют свежее соединение, но не «залипают» на мёртвом).
+    /// </summary>
+    public int PooledConnectionLifetimeSeconds { get; set; } = 60;
 }

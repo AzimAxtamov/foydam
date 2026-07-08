@@ -95,7 +95,7 @@ public class RealUzumApiClient : IUzumApiClient
         var sw = Stopwatch.StartNew();
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            using var req = new HttpRequestMessage(HttpMethod.Get, RelativeUri(url));
             ApplyAuth(req, apiKey);
 
             // Диагностика: без ретраев, хотим видеть сырую правду.
@@ -162,7 +162,7 @@ public class RealUzumApiClient : IUzumApiClient
     {
         for (var attempt = 0; ; attempt++)
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            using var req = new HttpRequestMessage(HttpMethod.Get, RelativeUri(url));
             ApplyAuth(req, apiKey);
 
             var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -189,21 +189,21 @@ public class RealUzumApiClient : IUzumApiClient
         }
     }
 
+    // Пути в коде пишутся с ведущим "/" (напр. "/v1/shops"). BaseAddress теперь
+    // содержит префикс "/api/seller-openapi/", а абсолютный путь ("/v1/…") этот
+    // префикс бы отбросил. Поэтому делаем URI относительным (убираем ведущий "/").
+    private static Uri RelativeUri(string url) => new(url.TrimStart('/'), UriKind.Relative);
+
     private void ApplyAuth(HttpRequestMessage req, string apiKey)
     {
-        if (string.Equals(_options.AuthHeaderName, "Authorization", StringComparison.OrdinalIgnoreCase))
-        {
-            req.Headers.Authorization = string.IsNullOrEmpty(_options.AuthScheme)
-                ? AuthenticationHeaderValue.Parse(apiKey)
-                : new AuthenticationHeaderValue(_options.AuthScheme, apiKey);
-        }
-        else
-        {
-            var value = string.IsNullOrEmpty(_options.AuthScheme)
-                ? apiKey
-                : $"{_options.AuthScheme} {apiKey}";
-            req.Headers.TryAddWithoutValidation(_options.AuthHeaderName, value);
-        }
+        // ВСЕГДА TryAddWithoutValidation, НИКОГДА AuthenticationHeaderValue.Parse/ctor:
+        // они валидируют значение и при недопустимом символе (напр. ':' в ключе Uzum)
+        // бросают исключение С ТЕКСТОМ КЛЮЧА — это и утечка ключа, и падение на валидных
+        // ключах. Uzum-ключ по спеке идёт сырым (без схемы Bearer).
+        var value = string.IsNullOrEmpty(_options.AuthScheme)
+            ? apiKey
+            : $"{_options.AuthScheme} {apiKey}";
+        req.Headers.TryAddWithoutValidation(_options.AuthHeaderName, value);
     }
 
     private TimeSpan ComputeDelay(HttpResponseMessage resp, int attempt)

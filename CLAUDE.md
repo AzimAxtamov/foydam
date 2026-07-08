@@ -62,13 +62,22 @@ Telegram-бот для селлеров маркетплейса Uzum Market (У
 > 35 путей, 107 схем). Разобрана вечером анализа спеки — находки ниже помечены **[SPEC]**.
 
 - База хоста: `https://api-seller.uzum.uz`
-- **[SPEC] Server URL из спеки: `https://api-seller.uzum.uz/api/seller-openapi/`** —
-  то есть канонический полный путь = `…/api/seller-openapi/` + `v1/product/…`.
-  НО: живой прогон `diag` по `https://api-seller.uzum.uz/v1/product/shop/{id}`
-  (без `/api/seller-openapi`) вернул `403 RBAC: access denied`, а не `404` —
-  значит запрос дошёл до слоя авторизации и роутинг сработал. Вероятно, шлюз
-  принимает оба варианта. **Проверить живым валидным ключом**, какой префикс
-  реально нужен; безопаснее выставить базу клиента с `/api/seller-openapi/`.
+- **[ЖИВОЙ КЛЮЧ] Канонический base-path ПОДТВЕРЖДЁН: `https://api-seller.uzum.uz/api/seller-openapi/`.**
+  Матрица `diag` (2 пути × 2 схемы) на `GET /v1/shops` показала разницу в теле:
+  - путь **без** префикса (`/v1/shops`) → `403 RBAC: access denied` — это **внешний
+    шлюз**, до Seller API запрос не доходит;
+  - путь **с** `/api/seller-openapi/` → структурный JSON
+    `{"errors":[{"code":"forbidden-001","message":"Token not found"}]}` — это ответ
+    **самого Seller API**.
+  Значит канонический путь — **только с `/api/seller-openapi/`**.
+  → **Внедрено:** `UzumApiOptions.BaseUrl` = `…/api/seller-openapi/` (со слешем в
+  конце), запросы в клиенте делаются относительными (`RelativeUri`, убирает ведущий
+  `/`, иначе абсолютный путь отбросил бы префикс). appsettings обновлён.
+- ⚠️ **[БАГ, исправлен] Auth-заголовок:** `ApplyAuth` использовал
+  `AuthenticationHeaderValue.Parse(key)` — он валидирует значение и на ключе с `:`
+  (реальный формат `<digits>:<base64>`) **бросал исключение С ТЕКСТОМ КЛЮЧА**
+  (утечка + падение на валидных ключах, классифицировалось как `Network`). Заменено
+  на `TryAddWithoutValidation` — без валидации и без утечки. Схема пустая (сырой ключ).
 - Swagger UI: `https://api-seller.uzum.uz/api/seller-openapi/swagger/swagger-ui/webjars/swagger-ui/index.html`
 - Ключ создаётся в ЛК селлера **на конкретный магазин**, права: «Только чтение» /
   «Редактирование», срок: от 1 месяца до бессрочного.
@@ -401,6 +410,15 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
   `ALTER USER … PASSWORD`. Описано в DEPLOY.md.
 - Деплой на VPS — по `DEPLOY.md` (клон по SSH: репо приватный, GitHub не
   принимает пароль по HTTPS).
+- ⚠️ **Грабли Contabo/сеть (ночь отладки):** Contabo теряет IPv6-маршрут через
+  часы аптайма; .NET шёл по AAAA/IPv6 → `network unreachable`, а `curl` молча
+  фолбэчился на IPv4 (диагностика curl'ом обманывала). Фиксы: в compose
+  `DOTNET_SYSTEM_NET_DISABLEIPV6=1` (только IPv4); в клиенте
+  `SocketsHttpHandler.PooledConnectionLifetime=60с` (край Uzum рвёт keep-alive,
+  .NET иначе переиспользует мёртвый сокет → `HttpRequestException`). Плюс защитный
+  `/etc/docker/daemon.json` с DNS 1.1.1.1/8.8.8.8 (ставится руками, см. DEPLOY.md).
+  **Правило диагностики:** curl из контейнера работает, а приложение падает —
+  проверять IPv6 и пул соединений, а не «сеть вообще».
 
 ## Роадмап по вечерам
 
