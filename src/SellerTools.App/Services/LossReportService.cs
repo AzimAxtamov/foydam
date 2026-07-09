@@ -71,10 +71,12 @@ public class LossReportService
 
         await PersistSnapshotsAsync(shopId, today, skus, ct);
 
-        // accepted по skuTitle: суммируем quantityAccepted ТОЛЬКО по ACCEPTED-накладным.
-        var acceptedByTitle = AggregateAccepted(invoices);
-        // removed по skuTitle: физвывоз по legacy-правилу.
-        var removedByTitle = AggregateRemoved(returns);
+        // Ключ матча — НОРМАЛИЗОВАННЫЙ полный код SKU. ⚠️ В карточке полный код лежит
+        // в skuFullTitle (skuTitle там короткий, напр. «11193»/«СЕРЫЙ»), а в накладных
+        // и возвратах полный код — в ИХ skuTitle. Нормализуем обе стороны (trim, UPPER,
+        // схлопывание пробелов), иначе join не сматчится и accepted/removed = 0.
+        var acceptedByKey = AggregateAccepted(invoices);
+        var removedByKey = AggregateRemoved(returns);
 
         var report = new LossReport
         {
@@ -86,9 +88,19 @@ public class LossReportService
 
         foreach (var s in skus)
         {
-            var title = s.SkuTitle ?? "";
-            var accepted = acceptedByTitle.GetValueOrDefault(title, 0);
-            var removed = removedByTitle.GetValueOrDefault(title, 0);
+            var key = NormalizeSkuKey(s.SkuFullTitle);
+            var accepted = acceptedByKey.GetValueOrDefault(key, 0);
+            var removed = removedByKey.GetValueOrDefault(key, 0);
+
+            // Защита от «немого нуля»: если по SKU было движение (sold/defected > 0),
+            // но accepted == 0 — почти наверняка ключ не сматчился (рассинхрон join'а).
+            // Логируем, чтобы баг больше не выглядел как честный «нет потерь».
+            if (accepted == 0 && (s.QuantitySold > 0 || s.QuantityDefected > 0))
+                _log.LogWarning(
+                    "Подозрение на несматченный SKU: skuId={SkuId} skuTitle='{Title}' " +
+                    "skuFullTitle='{Full}' → ключ карточки='{Key}', но accepted=0 при " +
+                    "sold={Sold}/defected={Def}. Проверить соответствие ключей invoice/return.",
+                    s.SkuId, s.SkuTitle, s.SkuFullTitle, key, s.QuantitySold, s.QuantityDefected);
 
             var row = BuildRow(s, accepted, removed);
             if (row.Lost > 0)
@@ -104,6 +116,19 @@ public class LossReportService
             shopId, report.Rows.Count, skus.Count, invoices.Count, returns.Count);
 
         return report;
+    }
+
+    /// <summary>
+    /// Единый ключ матча SKU между карточкой (skuFullTitle) и накладными/возвратами
+    /// (их skuTitle). Устойчив к «грязным» строкам Uzum: trim, верхний регистр,
+    /// схлопывание повторных пробелов. Null/пусто → пустая строка (не сматчится).
+    /// </summary>
+    private static string NormalizeSkuKey(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return "";
+        var collapsed = System.Text.RegularExpressions.Regex.Replace(raw.Trim(), @"\s+", " ");
+        return collapsed.ToUpperInvariant();
     }
 
     /// <summary>
@@ -148,8 +173,9 @@ public class LossReportService
     }
 
     /// <summary>
-    /// accepted по skuTitle: сумма quantityAccepted по всем строкам SKU в накладных,
-    /// у которых invoiceStatus.value == "ACCEPTED". Черновики (CREATED) игнорируем.
+    /// accepted по НОРМАЛИЗОВАННОМУ ключу (skuTitle накладной = полный код SKU):
+    /// сумма quantityAccepted по строкам SKU накладных со статусом ACCEPTED.
+    /// Черновики (CREATED) игнорируем. Ключ = NormalizeSkuKey(sku.SkuTitle).
     /// </summary>
     private static Dictionary<string, int> AggregateAccepted(IReadOnlyList<InvoiceDto> invoices)
     {
@@ -162,19 +188,20 @@ public class LossReportService
             foreach (var product in inv.Products)
             foreach (var sku in product.Skus)
             {
-                var title = sku.SkuTitle;
-                if (string.IsNullOrEmpty(title))
+                var key = NormalizeSkuKey(sku.SkuTitle);
+                if (key.Length == 0)
                     continue;
-                acc[title] = acc.GetValueOrDefault(title, 0) + sku.QuantityAccepted;
+                acc[key] = acc.GetValueOrDefault(key, 0) + sku.QuantityAccepted;
             }
         }
         return acc;
     }
 
     /// <summary>
-    /// removed по skuTitle: физвывоз со склада. Legacy-правило на РОДИТЕЛЬСКОМ возврате:
-    /// если totalPackedAmount==0 И assembledDate==null → берём amount строки; иначе
-    /// packedAmount. Матч по skuTitle.
+    /// removed по НОРМАЛИЗОВАННОМУ ключу (skuTitle возврата = полный код SKU): физвывоз
+    /// со склада. Legacy-правило на РОДИТЕЛЬСКОМ возврате: если totalPackedAmount==0 И
+    /// assembledDate отсутствует → берём amount строки; иначе packedAmount.
+    /// Ключ = NormalizeSkuKey(item.SkuTitle).
     /// </summary>
     private static Dictionary<string, int> AggregateRemoved(IReadOnlyList<SellerReturnDto> returns)
     {
@@ -184,11 +211,11 @@ public class LossReportService
             var useAmount = ret.UseAmount;
             foreach (var item in ret.ReturnItems)
             {
-                var title = item.SkuTitle;
-                if (string.IsNullOrEmpty(title))
+                var key = NormalizeSkuKey(item.SkuTitle);
+                if (key.Length == 0)
                     continue;
                 var qty = useAmount ? item.Amount : item.PackedAmount;
-                rem[title] = rem.GetValueOrDefault(title, 0) + qty;
+                rem[key] = rem.GetValueOrDefault(key, 0) + qty;
             }
         }
         return rem;

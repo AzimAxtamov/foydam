@@ -254,7 +254,8 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 - `GET /v1/return` — **ИСПОЛЬЗУЕМ ⭐** возвраты продавца → `array<SellerReturnDto>`
   (голый массив, size=50). Даёт `removed` (физвывоз) для баланса потерь по
   legacy-правилу (`totalPackedAmount==0 && assembledDate==null` → `amount`, иначе
-  `packedAmount`). DTO: `ReconciliationDtos.cs`.
+  `packedAmount`). Матч SKU — по `NormalizeSkuKey(item.skuTitle)` (полный код лежит
+  здесь в `skuTitle`, в карточке — в `skuFullTitle`). DTO: `ReconciliationDtos.cs`.
 - `GET /v1/shop/{shopId}/return` — **NEW** накладные возврата → `SellerReturnLite`.
 - `GET /v1/shop/{shopId}/return/{returnId}` — **NEW** состав накладной возврата.
 
@@ -262,7 +263,8 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 - `GET /v1/invoice` — **ИСПОЛЬЗУЕМ ⭐** список накладных → `array<InvoiceWithSkuListDto>`
   (голый массив, size=50). Даёт `accepted` для баланса потерь: сумма
   `quantityAccepted` по SKU **только** накладных `invoiceStatus.value=="ACCEPTED"`.
-  Матч SKU — по `skuTitle`. DTO: `ReconciliationDtos.cs`.
+  Матч SKU — по `NormalizeSkuKey(sku.skuTitle)` (полный код лежит здесь в `skuTitle`,
+  в карточке — в `skuFullTitle`; см. Формулы). DTO: `ReconciliationDtos.cs`.
 - `GET /v1/shop/{shopId}/invoice` — **NEW** накладные поставки по магазину.
 - `GET /v1/shop/{shopId}/invoice/products` — **NEW** состав накладной.
 
@@ -397,9 +399,23 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 - `sold` — `quantitySold` карточки (**уже НЕТТО**, ничего не вычитать);
 - `defected` — `quantityDefected` карточки; `stock` — `quantityActive` карточки.
 
-Матч SKU между источниками — **ТОЛЬКО по `skuTitle`** (`id`/`skuId` в накладных и
-возвратах внутренние, не совпадают). `lost < 0` → клампим в `0` + warning с `skuId`
-(рассинхрон снапшота, не потеря; селлеру отрицательное не показываем).
+**Матч SKU между источниками — по НОРМАЛИЗОВАННОМУ полному коду SKU (`NormalizeSkuKey`).**
+⚠️ **[БАГ, исправлен — «немой ноль»]** Полный код SKU (`GALERIA-193194-11193`) лежит
+в РАЗНЫХ полях:
+- в **карточке товара** (`skuList`) — в **`skuFullTitle`**; `skuTitle` там **короткий
+  вариант** (`11193`, `СЕРЫЙ`);
+- в **накладных `/v1/invoice`** и **возвратах `/v1/return`** — в **их `skuTitle`**.
+
+Прежний join матчил `card.skuTitle` ↔ `invoice.skuTitle` (`«11193»` vs
+`«GALERIA-193194-11193»`) → **не совпадал никогда**, `accepted`/`removed` всегда `0`,
+`lost` клампился в `0` — баг маскировался под честное «нет потерь». Теперь матч по
+`NormalizeSkuKey(card.skuFullTitle)` ↔ `NormalizeSkuKey(invoice/return.skuTitle)`.
+`NormalizeSkuKey`: trim + верхний регистр + схлопывание повторных пробелов (защита
+от грязных строк Uzum). `id`/`skuId` в накладных/возвратах — внутренние, по ним НЕ матчим.
+
+**Защита от «немого нуля»:** если по SKU было движение (`sold>0` ИЛИ `defected>0`),
+но `accepted==0` — логируем warning с обоими ключами (рассинхрон join'а больше не
+выглядит как честный ноль). `lost < 0` → клампим в `0` + warning с `skuId`.
 ⚠️ `quantityReturned` карточки = КЛИЕНТСКИЕ возвраты, в формуле НЕ участвует.
 
 **Денежная оценка:** `lost × sellPrice` (`price`) — всегда, «к взысканию».
