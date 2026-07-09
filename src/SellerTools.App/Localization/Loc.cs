@@ -20,29 +20,29 @@ public static class Loc
             ["report.shop"] = "Магазин",
             ["report.date"] = "Дата",
             ["report.col.sku"] = "SKU / товар",
-            ["report.col.missing"] = "Потеряно",
-            ["report.col.defected"] = "Брак",
+            ["report.col.lost"] = "Потеряно",
             ["report.col.price"] = "Цена",
             ["report.col.bySale"] = "По цене продажи",
-            ["report.col.byPurchase"] = "По закупу",
+            ["report.col.byCogs"] = "По себестоимости",
             ["report.total"] = "ИТОГО",
             ["report.totalBySale"] = "Итого по цене продажи",
-            ["report.totalByPurchase"] = "Итого по закупу",
-            ["report.noLosses"] = "Потерянных и бракованных товаров не найдено — всё в порядке.",
-            ["report.purchaseNote"] =
-                "* Закуп берётся из ЛК Uzum и у части товаров не заполнен — оценка по закупу неполная.",
+            ["report.totalByCogs"] = "Итого по себестоимости",
+            ["report.noLosses"] = "Потерянных товаров не найдено — баланс сходится.",
+            ["report.cogsNote"] =
+                "* Себестоимость не указана — оценка потерь только по цене продажи. " +
+                "Ввод себестоимости появится позже.",
+            ["report.compensationNote"] =
+                "Если по позиции Uzum уже компенсировал потерю — вычтите эту сумму вручную.",
             ["report.scanned"] = "Просмотрено SKU",
 
             // --- Карточный отчёт в боте ---
             ["report.card.owed"] = "💰 Uzum вам должен: до {0} сум",
-            ["report.card.minByPurchase"] = "Из них подтверждено закупом: {0} сум",
             ["report.card.header"] = "🏪 {0} · {1} · проверено {2} товаров",
-            ["report.card.missing"] = "❌ потеряно {0}",
-            ["report.card.defected"] = "⚠️ брак {0}",
+            ["report.card.lost"] = "❌ потеряно {0}",
             ["report.card.sum"] = "≈ {0} сум",
-            ["report.card.linePurchase"] = "   закуп: ≈ {0} сум",
+            ["report.card.lineCogs"] = "   по себестоимости: ≈ {0} сум",
             ["report.card.more"] = "…и ещё {0} позиций — полный список в Excel",
-            ["report.card.clean"] = "✅ Потерь и брака не найдено — проверено {0} товаров, всё чисто",
+            ["report.card.clean"] = "✅ Потерь не найдено — баланс по {0} товарам сходится",
 
             // --- Excel: лист потеряшек ---
             ["xlsx.loss.sheet"] = "Потеряшки",
@@ -51,15 +51,18 @@ public static class Loc
             ["xlsx.col.product"] = "Товар",
             ["xlsx.col.article"] = "Артикул",
             ["xlsx.col.barcode"] = "Штрихкод",
-            ["xlsx.col.missing"] = "Потеряно",
+            ["xlsx.col.accepted"] = "Принято",
+            ["xlsx.col.removed"] = "Вывезено",
+            ["xlsx.col.sold"] = "Продано",
             ["xlsx.col.defected"] = "Брак",
+            ["xlsx.col.stock"] = "Остаток",
+            ["xlsx.col.lost"] = "Потеряно",
             ["xlsx.col.price"] = "Цена продажи",
-            ["xlsx.col.purchase"] = "Закуп из ЛК",
             ["xlsx.col.sumSale"] = "Сумма по продаже",
-            ["xlsx.col.sumPurchase"] = "Сумма по закупу",
             ["xlsx.loss.total"] = "ИТОГО",
             ["xlsx.loss.note"] =
-                "Закуп берётся из ЛК Uzum и у части товаров не заполнен — оценка по закупу неполная.",
+                "Потеряно = принято − вывезено − продано − брак − остаток. " +
+                "Если Uzum уже компенсировал потерю по позиции — вычтите её вручную.",
 
             // --- Excel: лист товары + ИКПУ ---
             ["xlsx.ikpu.sheet"] = "Товары и ИКПУ",
@@ -167,29 +170,29 @@ public static class Loc
             ["report.shop"] = "Do'kon",
             ["report.date"] = "Sana",
             ["report.col.sku"] = "SKU / tovar",
-            ["report.col.missing"] = "Yo'qolgan",
-            ["report.col.defected"] = "Nuqson",
+            ["report.col.lost"] = "Yo'qolgan",
             ["report.col.price"] = "Narx",
             ["report.col.bySale"] = "Sotuv narxi bo'yicha",
-            ["report.col.byPurchase"] = "Xarid bo'yicha",
+            ["report.col.byCogs"] = "Tannarx bo'yicha",
             ["report.total"] = "JAMI",
             ["report.totalBySale"] = "Sotuv narxi bo'yicha jami",
-            ["report.totalByPurchase"] = "Xarid bo'yicha jami",
-            ["report.noLosses"] = "Yo'qolgan va nuqsonli tovarlar topilmadi — hammasi joyida.",
-            ["report.purchaseNote"] =
-                "* Xarid narxi Uzum shaxsiy kabinetidan olinadi va ba'zi tovarlarda to'ldirilmagan — xarid bo'yicha baho to'liq emas.",
+            ["report.totalByCogs"] = "Tannarx bo'yicha jami",
+            ["report.noLosses"] = "Yo'qolgan tovarlar topilmadi — balans to'g'ri keladi.",
+            ["report.cogsNote"] =
+                "* Tannarx ko'rsatilmagan — yo'qotish faqat sotuv narxi bo'yicha baholanadi. " +
+                "Tannarx kiritish keyinroq qo'shiladi.",
+            ["report.compensationNote"] =
+                "Agar Uzum pozitsiya bo'yicha yo'qotishni allaqachon qoplagan bo'lsa — bu summani qo'lda ayiring.",
             ["report.scanned"] = "Tekshirilgan SKU",
 
             // --- Kartochka hisoboti ---
             ["report.card.owed"] = "💰 Uzum sizga qarzdor: {0} so'mgacha",
-            ["report.card.minByPurchase"] = "Shundan xarid bilan tasdiqlangan: {0} so'm",
             ["report.card.header"] = "🏪 {0} · {1} · {2} ta tovar tekshirildi",
-            ["report.card.missing"] = "❌ yo'qolgan {0}",
-            ["report.card.defected"] = "⚠️ nuqson {0}",
+            ["report.card.lost"] = "❌ yo'qolgan {0}",
             ["report.card.sum"] = "≈ {0} so'm",
-            ["report.card.linePurchase"] = "   xarid: ≈ {0} so'm",
+            ["report.card.lineCogs"] = "   tannarx bo'yicha: ≈ {0} so'm",
             ["report.card.more"] = "…va yana {0} ta pozitsiya — to'liq ro'yxat Excelda",
-            ["report.card.clean"] = "✅ Yo'qotish va nuqson topilmadi — {0} ta tovar tekshirildi, hammasi toza",
+            ["report.card.clean"] = "✅ Yo'qotish topilmadi — {0} ta tovar bo'yicha balans to'g'ri keladi",
 
             // --- Excel: yo'qotishlar varag'i ---
             ["xlsx.loss.sheet"] = "Yo'qotishlar",
@@ -198,15 +201,18 @@ public static class Loc
             ["xlsx.col.product"] = "Tovar",
             ["xlsx.col.article"] = "Artikul",
             ["xlsx.col.barcode"] = "Shtrix-kod",
-            ["xlsx.col.missing"] = "Yo'qolgan",
+            ["xlsx.col.accepted"] = "Qabul qilingan",
+            ["xlsx.col.removed"] = "Chiqarilgan",
+            ["xlsx.col.sold"] = "Sotilgan",
             ["xlsx.col.defected"] = "Nuqson",
+            ["xlsx.col.stock"] = "Qoldiq",
+            ["xlsx.col.lost"] = "Yo'qolgan",
             ["xlsx.col.price"] = "Sotuv narxi",
-            ["xlsx.col.purchase"] = "Kabinetdagi xarid",
             ["xlsx.col.sumSale"] = "Sotuv bo'yicha summa",
-            ["xlsx.col.sumPurchase"] = "Xarid bo'yicha summa",
             ["xlsx.loss.total"] = "JAMI",
             ["xlsx.loss.note"] =
-                "Xarid narxi Uzum kabinetidan olinadi va ba'zi tovarlarda to'ldirilmagan — xarid bo'yicha baho to'liq emas.",
+                "Yo'qolgan = qabul qilingan − chiqarilgan − sotilgan − nuqson − qoldiq. " +
+                "Agar Uzum pozitsiya bo'yicha yo'qotishni qoplagan bo'lsa — uni qo'lda ayiring.",
 
             // --- Excel: tovarlar + IKPU ---
             ["xlsx.ikpu.sheet"] = "Tovarlar va IKPU",

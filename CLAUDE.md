@@ -9,6 +9,13 @@
 > даты = epoch millis (и в expenses тоже, спека врала), finance/* доступны read-only
 > ключом, дневной лимит 100 000. DTO поправлены под живые данные (commission=double,
 > nullable-поля). Осталось: глубина истории `finance/orders` (нужен магазин с историей).
+> **[ПОТЕРЯШКИ ПЕРЕПИСАНЫ]:** `quantityMissing` МЁРТВ (deprecated, всегда 0) —
+> заменён на балансовую реконсиляцию `lost = accepted − removed − sold − defected −
+> stock` из `/v1/invoice` (ACCEPTED) + `/v1/return` (legacy-правило) + карточки.
+> Валидировано на живом бета-селлере. Полная спека — `docs/loss-reconciliation.md`.
+> Отчёт строится из свежих API-данных (не из снапшота — там нет accepted/removed).
+> COGS = только введённый селлером (в Фазе 0 нет → «закуп не указан»), purchasePrice
+> из API грязный, не подставляем. HTTP-клиент: параллелизм ≤3, ретрай на socket reset.
 > **Открыто:** В6 (беты на живых селлерах), деплой на реальный VPS. По умолчанию
 > `UzumApi:Mode=Mock`. Репозиторий приватный: `AzimAxtamov/foydam`, клон по SSH.
 >
@@ -244,12 +251,18 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 - `POST /v2/fbs/sku/stocks` — обновление остатков (write).
 
 **Return Invoice** ⭐ (пригодится для Фазы 1 — алерты по возвратам)
-- `GET /v1/return` — **NEW ⭐** возвраты продавца → `array<SellerReturnDto>`.
+- `GET /v1/return` — **ИСПОЛЬЗУЕМ ⭐** возвраты продавца → `array<SellerReturnDto>`
+  (голый массив, size=50). Даёт `removed` (физвывоз) для баланса потерь по
+  legacy-правилу (`totalPackedAmount==0 && assembledDate==null` → `amount`, иначе
+  `packedAmount`). DTO: `ReconciliationDtos.cs`.
 - `GET /v1/shop/{shopId}/return` — **NEW** накладные возврата → `SellerReturnLite`.
 - `GET /v1/shop/{shopId}/return/{returnId}` — **NEW** состав накладной возврата.
 
 **FBO Invoice** (накладные поставки на склад Uzum)
-- `GET /v1/invoice` — **NEW** список накладных → `array<InvoiceWithSkuListDto>`.
+- `GET /v1/invoice` — **ИСПОЛЬЗУЕМ ⭐** список накладных → `array<InvoiceWithSkuListDto>`
+  (голый массив, size=50). Даёт `accepted` для баланса потерь: сумма
+  `quantityAccepted` по SKU **только** накладных `invoiceStatus.value=="ACCEPTED"`.
+  Матч SKU — по `skuTitle`. DTO: `ReconciliationDtos.cs`.
 - `GET /v1/shop/{shopId}/invoice` — **NEW** накладные поставки по магазину.
 - `GET /v1/shop/{shopId}/invoice/products` — **NEW** состав накладной.
 
@@ -321,6 +334,16 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 экспоненциальным бэкоффом, проектировать синки инкрементально (dateFrom от
 последнего курсора), не делать полных перекачек без необходимости.
 
+⚠️ **[ЖИВОЙ КЛЮЧ] Правила HTTP-клиента (внедрены):**
+- **Параллелизм ≤ 3** одновременных запросов (`UzumApiOptions.MaxConcurrency=3`,
+  статический `SemaphoreSlim`, общий на процесс). При большем **Uzum рвёт коннекты**.
+- **Ретрай на разрыв соединения** (`HttpRequestException`: socket reset — край Uzum
+  закрывает keep-alive) в `SendWithRetryAsync`, не только на HTTP-статусы.
+- **Даты в параметрах `finance/*` — epoch СЕКУНДЫ**, в ответах — millis. Прислать
+  millis в параметрах → сервер молча вернёт пусто (200, ноль записей). Делить на 1000.
+- **`finance/expenses`: `payload.totalElements` = 0** даже при непустых данных →
+  пагинация до пустой страницы, не по счётчику. (Комментарии-грабли — в `BuildProbeUrl`.)
+
 ### Неизвестное (статус после разбора спеки)
 
 1. ✅ **Закрыто [SPEC].** Auth = `Authorization: <ключ>` без `Bearer` (см. выше).
@@ -361,11 +384,32 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 
 ## Формулы
 
-**Потеряшки (Фаза 0):** по каждому SKU, где `quantityMissing + quantityDefected > 0`:
-- оценка по цене продажи: `(missing + defected) × price`
-- оценка по закупу: `(missing + defected) × purchasePrice`, только если `purchasePrice > 0`
-- итоги по магазину обеими оценками. В отчёте показывать обе, с пометкой, что
-  закуп из ЛК может быть не заполнен.
+**Потеряшки (Фаза 0) — БАЛАНСОВАЯ РЕКОНСИЛЯЦИЯ** (полная спека: `docs/loss-reconciliation.md`).
+⚠️ **`quantityMissing` из карточки МЁРТВ:** поле deprecated в спеке и всегда
+возвращает `0` — прежний расчёт был нерабочим (всегда ноль). Заменён на баланс,
+валидированный на живом бета-селлере (3 SKU, сверка с физподсчётом, 4 источника сошлись).
+
+По каждому SKU: `lost = accepted − removed − sold − defected − stock`, где:
+- `accepted` — `GET /v1/invoice`, сумма `quantityAccepted` по `skuForInvoiceDtoList`,
+  **только** накладные `invoiceStatus.value == "ACCEPTED"` (`CREATED` исключить);
+- `removed` — `GET /v1/return`, физвывоз по **legacy-правилу**: если у родительского
+  return `totalPackedAmount == 0` И `assembledDate == null` → берём `amount`; иначе `packedAmount`;
+- `sold` — `quantitySold` карточки (**уже НЕТТО**, ничего не вычитать);
+- `defected` — `quantityDefected` карточки; `stock` — `quantityActive` карточки.
+
+Матч SKU между источниками — **ТОЛЬКО по `skuTitle`** (`id`/`skuId` в накладных и
+возвратах внутренние, не совпадают). `lost < 0` → клампим в `0` + warning с `skuId`
+(рассинхрон снапшота, не потеря; селлеру отрицательное не показываем).
+⚠️ `quantityReturned` карточки = КЛИЕНТСКИЕ возвраты, в формуле НЕ участвует.
+
+**Денежная оценка:** `lost × sellPrice` (`price`) — всегда, «к взысканию».
+`lost × COGS` — COGS = **себестоимость, введённая селлером у нас**; в Фазе 0 ввода
+нет → всегда 0, показываем «закуп не указан». `purchasePrice` из API **НЕ подставлять**
+(грязный). **Компенсаций в API нет** (проверено на леджере `expenses`) — отчёт
+добавляет строку «если уже была компенсация — вычтите вручную».
+
+Пагинация `/v1/invoice` и `/v1/return`: голый JSON-массив (не envelope), `size=50`,
+`page` с 0, до неполной страницы (у активных селлеров 70+; `totalElements` нет).
 
 **Прибыль (Фаза 1, для архитектурного учёта):**
 `sellerPrice×qtyNet − commission − logisticDeliveryFee − нашCOGS×qtyNet − доля(expenses)`,
@@ -379,9 +423,12 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
   Hangfire.PostgreSql `1.21.*`).
 - Проекты:
   - `SellerTools.Core` — сущности домена + модель отчёта, без зависимостей.
-  - `SellerTools.UzumApi` — DTO, `IUzumApiClient`, реальный клиент (HttpClient,
-    rate-limit заголовки, ретраи 429/5xx, `ProbeAsync` для diag), `MockUzumApiClient`
-    (детерминированный, seed; ~25 SKU с узбекско-русскими названиями, у 6 missing/defected).
+  - `SellerTools.UzumApi` — DTO (в т.ч. `ReconciliationDtos.cs`: invoice/return для
+    баланса потерь), `IUzumApiClient` (+`GetAllInvoicesAsync`/`GetAllReturnsAsync`),
+    реальный клиент (HttpClient, rate-limit заголовки, ретраи 429/5xx **и на socket
+    reset**, гейт параллелизма ≤`MaxConcurrency`=3, `ProbeAsync` для diag),
+    `MockUzumApiClient` (детерминированный, seed; ~25 SKU, у 6 — баланс с потерей;
+    накладные+возвраты синтезируются из товаров, баланс сходится).
   - `SellerTools.App` — хост (WebApplication для дашборда), DI, EF, бот, джобы,
     Excel, шифрование, алерты, диагностика.
 - Сущности: `Seller` (Id = Telegram user id, Language ru|uz),
@@ -455,6 +502,14 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 - **В5 (СДЕЛАНО):** карточный отчёт в боте + Excel-экспорт (ClosedXML): «Потеряшки
   в Excel» (числа числовыми ячейками, итоги формулой SUM) и «Товары + ИКПУ» (для
   ЭТТН). Кнопка «Обновить данные» с троттлингом 30 мин. UZ доведён до 100% (черновой).
+- **[ПОТЕРЯШКИ ПЕРЕПИСАНЫ, после В5]:** расчёт по мёртвому `quantityMissing`
+  заменён на балансовую реконсиляцию (`docs/loss-reconciliation.md`). `LossReport`
+  теперь несёт `Lost` + компоненты баланса (accepted/removed/sold/defected/stock);
+  `LossReportService.BuildAsync` тянет товары+`/v1/invoice`+`/v1/return` и считает
+  на лету; `BuildFromSnapshotAsync` удалён (в снапшоте нет accepted/removed). Отчёт
+  и Excel-«Потеряшки» строятся из свежих API-данных. Excel-лист потеряшек: колонки
+  баланса + «Потеряно» + сумма по продаже (колонки закупа больше нет). Loc: ключи
+  `report.*`/`xlsx.*` обновлены (RU+UZ 100%), сноска про компенсацию.
 - **В6 (НЕ НАЧАТ):** беты на живых селлерах, фиксы.
 - **В7 (СДЕЛАНО):** production-деплой. Multi-stage `Dockerfile`,
   `docker-compose.prod.yml` (app+postgres+redis+backup, секреты через `.env`,

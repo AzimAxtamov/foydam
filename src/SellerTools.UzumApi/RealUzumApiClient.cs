@@ -23,6 +23,12 @@ public class RealUzumApiClient : IUzumApiClient
     private readonly UzumApiOptions _options;
     private readonly ILogger<RealUzumApiClient> _log;
 
+    // Uzum рвёт коннекты при большом параллелизме — ограничиваем ≤3 одновременных
+    // запроса на процесс. Статический: клиент регистрируется как typed HttpClient
+    // (transient), а гейт должен быть общим на все инстансы. Значение из опций.
+    private static SemaphoreSlim? _concurrency;
+    private static readonly object ConcurrencyLock = new();
+
     // Заголовки rate-limit из swagger — читаем и логируем (значения узнаём живым ключом).
     private static readonly string[] RateLimitHeaders =
     {
@@ -44,6 +50,14 @@ public class RealUzumApiClient : IUzumApiClient
         _log = log;
         if (_http.BaseAddress is null)
             _http.BaseAddress = new Uri(_options.BaseUrl);
+
+        // Гейт параллелизма инициализируем один раз (лениво): значение из опций,
+        // минимум 1. Uzum рвёт коннекты при >3 одновременных запросах.
+        if (_concurrency is null)
+        {
+            lock (ConcurrencyLock)
+                _concurrency ??= new SemaphoreSlim(Math.Max(1, _options.MaxConcurrency));
+        }
     }
 
     public async Task<IReadOnlyList<ShopDto>> GetShopsAsync(
@@ -86,6 +100,39 @@ public class RealUzumApiClient : IUzumApiClient
             IsLast = body.ProductList.Count < size,
             RateLimitHeaders = ExtractRateLimitHeaders(resp),
         };
+    }
+
+    public Task<IReadOnlyList<InvoiceDto>> GetAllInvoicesAsync(
+        long shopId, string apiKey, CancellationToken ct = default)
+        => GetAllPagesAsync<InvoiceDto>("/v1/invoice", apiKey, ct);
+
+    public Task<IReadOnlyList<SellerReturnDto>> GetAllReturnsAsync(
+        long shopId, string apiKey, CancellationToken ct = default)
+        => GetAllPagesAsync<SellerReturnDto>("/v1/return", apiKey, ct);
+
+    // Обход постранично ручек, отдающих ГОЛЫЙ JSON-массив (не envelope): /v1/invoice,
+    // /v1/return. size=50 (максимум по спеке), page с 0, идём до неполной страницы.
+    // По totalElements НЕ ориентируемся — у этих ручек его нет.
+    private async Task<IReadOnlyList<T>> GetAllPagesAsync<T>(
+        string path, string apiKey, CancellationToken ct)
+    {
+        const int size = 50;
+        var all = new List<T>();
+        var page = 0;
+
+        while (true)
+        {
+            var url = $"{path}?size={size}&page={page}";
+            using var resp = await SendWithRetryAsync(url, apiKey, ct);
+            var batch = await resp.Content.ReadFromJsonAsync<List<T>>(ct) ?? new List<T>();
+            all.AddRange(batch);
+
+            if (batch.Count < size)
+                break;
+            page++;
+        }
+
+        return all;
     }
 
     public async Task<ProbeResult> ProbeAsync(
@@ -133,6 +180,14 @@ public class RealUzumApiClient : IUzumApiClient
     {
         ProbeEndpoint.Products => $"/v1/product/shop/{shopId}?filter=ALL&size=5&page=0",
         // group=false → плоский список позиций; size маленький — диагностика.
+        // ⚠️ ГРАБЛИ ФИНАНСОВ (для будущего синка, подтверждено живьём):
+        //  1) dateFrom/dateTo здесь — epoch СЕКУНДЫ, а даты в ответах — epoch МИЛЛИ.
+        //     Если прислать миллисекунды в параметрах — сервер молча вернёт пусто
+        //     (200, ноль записей, без ошибки). Делить millis на 1000 перед запросом.
+        //  2) finance/expenses: payload.totalElements возвращает 0 даже при непустых
+        //     данных — пагинацию вести ДО ПУСТОЙ страницы, не по этому счётчику.
+        //  3) skuId есть только при group=true; в group=false его нет — join item↔SKU
+        //     только по (productId, skuTitle). SKU без заказов = ноль, не ошибка.
         ProbeEndpoint.FinanceOrders => $"/v1/finance/orders?page=0&size=5&group=false&shopIds={shopId}",
         ProbeEndpoint.FinanceExpenses => $"/v1/finance/expenses?page=0&size=5&shopIds={shopId}",
         _ => throw new ArgumentOutOfRangeException(nameof(endpoint)),
@@ -156,16 +211,47 @@ public class RealUzumApiClient : IUzumApiClient
         return result;
     }
 
-    /// <summary>GET с ретраями 429/5xx и логированием rate-limit заголовков.</summary>
+    /// <summary>
+    /// GET с ретраями на 429/5xx И на разрыв соединения (HttpRequestException:
+    /// socket reset — край Uzum закрывает keep-alive, .NET падает на мёртвом сокете),
+    /// логированием rate-limit заголовков и гейтом параллелизма (≤MaxConcurrency).
+    /// </summary>
     private async Task<HttpResponseMessage> SendWithRetryAsync(
         string url, string apiKey, CancellationToken ct)
     {
         for (var attempt = 0; ; attempt++)
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, RelativeUri(url));
-            ApplyAuth(req, apiKey);
+            HttpResponseMessage resp;
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, RelativeUri(url));
+                ApplyAuth(req, apiKey);
 
-            var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+                // Гейт параллелизма: не даём >MaxConcurrency одновременных запросов
+                // к Uzum (иначе край рвёт коннекты). Держим только на время SendAsync;
+                // тело читается вызывающим уже вне гейта (малые JSON-payload'ы).
+                await _concurrency!.WaitAsync(ct);
+                try
+                {
+                    resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+                }
+                finally
+                {
+                    _concurrency.Release();
+                }
+            }
+            catch (HttpRequestException ex) when (attempt < _options.MaxRetries)
+            {
+                // Разрыв соединения (socket reset / connection refused) — ретраим
+                // как временную сетевую ошибку, а не роняем расчёт.
+                var delay = ComputeDelay(null, attempt);
+                _log.LogWarning(
+                    "Uzum API сетевой сбой на {Url} ({Msg}), попытка {Attempt}/{Max}, повтор через {Delay}мс",
+                    url, ex.Message, attempt + 1, _options.MaxRetries, delay.TotalMilliseconds);
+                await Task.Delay(delay, ct);
+                continue;
+            }
+
             LogRateLimit(resp);
 
             if (resp.IsSuccessStatusCode)
@@ -180,12 +266,12 @@ public class RealUzumApiClient : IUzumApiClient
                 return resp;
             }
 
-            var delay = ComputeDelay(resp, attempt);
+            var httpDelay = ComputeDelay(resp, attempt);
             _log.LogWarning(
                 "Uzum API {Status} на {Url}, попытка {Attempt}/{Max}, повтор через {Delay}мс",
-                (int)resp.StatusCode, url, attempt + 1, _options.MaxRetries, delay.TotalMilliseconds);
+                (int)resp.StatusCode, url, attempt + 1, _options.MaxRetries, httpDelay.TotalMilliseconds);
             resp.Dispose();
-            await Task.Delay(delay, ct);
+            await Task.Delay(httpDelay, ct);
         }
     }
 
@@ -206,10 +292,10 @@ public class RealUzumApiClient : IUzumApiClient
         req.Headers.TryAddWithoutValidation(_options.AuthHeaderName, value);
     }
 
-    private TimeSpan ComputeDelay(HttpResponseMessage resp, int attempt)
+    private TimeSpan ComputeDelay(HttpResponseMessage? resp, int attempt)
     {
-        // Уважаем Retry-After, если сервер прислал.
-        if (resp.Headers.RetryAfter?.Delta is { } delta)
+        // Уважаем Retry-After, если сервер прислал (для сетевого сбоя resp == null).
+        if (resp?.Headers.RetryAfter?.Delta is { } delta)
             return delta;
 
         // Экспоненциальный бэкофф с небольшим джиттером.

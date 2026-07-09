@@ -151,6 +151,112 @@ public class MockUzumApiClient : IUzumApiClient
         return products;
     }
 
+    // Балансовая реконсиляция (Mock): накладные и возвраты выдаём так, чтобы баланс
+    // lost = accepted − removed − sold − defected − stock сошёлся с построенными
+    // товарами. План строим ИЗ САМИХ товаров (не реплицируя rnd повторно) —
+    // так accepted гарантированно = целевой lost + removed + sold + defected + stock.
+    public Task<IReadOnlyList<InvoiceDto>> GetAllInvoicesAsync(
+        long shopId, string apiKey, CancellationToken ct = default)
+    {
+        var acceptedSkus = new List<SkuForInvoiceDto>();
+        foreach (var plan in BuildReconPlan())
+        {
+            acceptedSkus.Add(new SkuForInvoiceDto
+            {
+                SkuTitle = plan.Title,
+                QuantityAcceptedRaw = plan.Accepted,
+            });
+        }
+
+        // Одна накладная ACCEPTED со всеми SKU + одна CREATED (её accepted игнорируем).
+        var invoices = new List<InvoiceDto>
+        {
+            new()
+            {
+                Id = 500001,
+                InvoiceStatus = new InvoiceStatusDto { Value = "ACCEPTED" },
+                Products = new List<ProductForInvoiceDto>
+                {
+                    new() { ProductTitle = "Демо-поставка", Skus = acceptedSkus },
+                },
+            },
+            new()
+            {
+                Id = 500002,
+                InvoiceStatus = new InvoiceStatusDto { Value = "CREATED" },
+                Products = new List<ProductForInvoiceDto>
+                {
+                    new()
+                    {
+                        ProductTitle = "Черновик поставки",
+                        Skus = new List<SkuForInvoiceDto>
+                        {
+                            // НЕ должно попасть в accepted (статус накладной CREATED).
+                            new() { SkuTitle = Catalog[0].Sku, QuantityAcceptedRaw = 9999 },
+                        },
+                    },
+                },
+            },
+        };
+
+        return Task.FromResult<IReadOnlyList<InvoiceDto>>(invoices);
+    }
+
+    public Task<IReadOnlyList<SellerReturnDto>> GetAllReturnsAsync(
+        long shopId, string apiKey, CancellationToken ct = default)
+    {
+        var returns = new List<SellerReturnDto>();
+        var id = 600001L;
+
+        foreach (var plan in BuildReconPlan())
+        {
+            if (plan.Removed <= 0)
+                continue;
+
+            // Чередуем две ветки legacy-правила, чтобы обе покрывались:
+            //  - useAmount: totalPackedAmount==0 && assembledDate==null → берём amount;
+            //  - иначе: assembledDate задан → берём packedAmount.
+            var useAmount = id % 2 == 1;
+            returns.Add(new SellerReturnDto
+            {
+                Id = id++,
+                TotalPackedAmount = useAmount ? 0 : plan.Removed,
+                AssembledDate = useAmount ? null : "2026-06-01T10:00:00Z",
+                ReturnItems = new List<SellerReturnItemDto>
+                {
+                    new()
+                    {
+                        SkuTitle = plan.Title,
+                        AmountRaw = useAmount ? plan.Removed : 0,
+                        PackedAmountRaw = useAmount ? 0 : plan.Removed,
+                    },
+                },
+            });
+        }
+
+        return Task.FromResult<IReadOnlyList<SellerReturnDto>>(returns);
+    }
+
+    // План реконсиляции: строится ИЗ построенных товаров, чтобы accepted точно
+    // балансировался. Для lossIndexes закладываем положительный lost (== missing из
+    // карточки, для узнаваемости); для остальных lost = 0. removed — детерминирован.
+    private static IEnumerable<ReconPlan> BuildReconPlan()
+    {
+        var lossIndexes = new HashSet<int> { 1, 4, 8, 11, 15, 21 };
+        var products = BuildAllProducts();
+
+        for (var i = 0; i < products.Count; i++)
+        {
+            var sku = products[i].SkuList[0];
+            var removed = i % 3 == 0 ? 2 : 0;
+            var lost = lossIndexes.Contains(i) ? sku.QuantityMissing : 0;
+            var accepted = lost + removed + sku.QuantitySold + sku.QuantityDefected + sku.QuantityActive;
+            yield return new ReconPlan(sku.SkuTitle ?? "", accepted, removed);
+        }
+    }
+
+    private readonly record struct ReconPlan(string Title, int Accepted, int Removed);
+
     public Task<ProbeResult> ProbeAsync(
         ProbeEndpoint endpoint, long shopId, string apiKey, CancellationToken ct = default)
     {

@@ -37,6 +37,26 @@ public interface IUzumApiClient
         CancellationToken ct = default);
 
     /// <summary>
+    /// Все накладные поставки FBO (GET /v1/invoice, обходит все страницы, size=50).
+    /// Для балансовой реконсиляции потерь: accepted = quantityAccepted по
+    /// накладным ACCEPTED. Голый JSON-массив, пагинация до неполной страницы.
+    /// </summary>
+    Task<IReadOnlyList<InvoiceDto>> GetAllInvoicesAsync(
+        long shopId,
+        string apiKey,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Все возвраты продавца (GET /v1/return, обходит все страницы, size=50).
+    /// Для реконсиляции: removed (физический вывоз со склада) по legacy-правилу.
+    /// Голый JSON-массив, пагинация до неполной страницы.
+    /// </summary>
+    Task<IReadOnlyList<SellerReturnDto>> GetAllReturnsAsync(
+        long shopId,
+        string apiKey,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Диагностика: одиночный сырой GET к эндпоинту. Возвращает статус,
     /// rate-limit заголовки и начало тела. Не ретраит, не бросает исключения —
     /// сетевые ошибки кладёт в ProbeResult.Error. Нужно для проверки живым ключом

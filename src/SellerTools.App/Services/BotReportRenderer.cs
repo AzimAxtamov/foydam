@@ -28,10 +28,8 @@ public static class BotReportRenderer
 
         var sb = new StringBuilder();
 
-        // Шапка: первая строка (💰 + текст) целиком жирная, затем подтверждённое
-        // закупом и строка магазина.
+        // Шапка: первая строка (💰 + текст) целиком жирная, затем строка магазина.
         sb.AppendLine($"*{string.Format(Loc.T("report.card.owed", lang), Fmt(r.TotalEstimateBySalePrice))}*");
-        sb.AppendLine(string.Format(Loc.T("report.card.minByPurchase", lang), Fmt(r.TotalEstimateByPurchasePrice)));
         sb.AppendLine(string.Format(Loc.T("report.card.header", lang), shop, date, r.TotalSkusScanned));
         sb.AppendLine();
 
@@ -58,12 +56,9 @@ public static class BotReportRenderer
             sb.AppendLine(string.Format(Loc.T("report.card.more", lang), hidden));
         }
 
-        // Сноска про незаполненный закуп.
-        if (r.HasSkusWithoutPurchasePrice)
-        {
-            sb.AppendLine();
-            sb.AppendLine($"_{Loc.T("report.purchaseNote", lang)}_");
-        }
+        // Сноска про уже полученную компенсацию (вычесть вручную).
+        sb.AppendLine();
+        sb.AppendLine($"_{Loc.T("report.compensationNote", lang)}_");
 
         var text = sb.ToString();
         // Крайняя подстраховка — жёстко не превышаем лимит Telegram.
@@ -77,18 +72,17 @@ public static class BotReportRenderer
         var sb = new StringBuilder();
         sb.AppendLine($"{number}. *{Escape(name)}*");
 
-        // Строка потерь: нулевые компоненты (потеряно 0 / брак 0) скрываем.
-        var parts = new List<string>();
-        if (row.Missing > 0)
-            parts.Add(string.Format(Loc.T("report.card.missing", lang), row.Missing));
-        if (row.Defected > 0)
-            parts.Add(string.Format(Loc.T("report.card.defected", lang), row.Defected));
-        parts.Add(string.Format(Loc.T("report.card.sum", lang), Fmt(row.EstimateBySalePrice)));
+        // Строка потерь: сколько потеряно по балансу + оценка к взысканию.
+        var parts = new List<string>
+        {
+            string.Format(Loc.T("report.card.lost", lang), row.Lost),
+            string.Format(Loc.T("report.card.sum", lang), Fmt(row.EstimateBySalePrice)),
+        };
         sb.AppendLine(string.Join(" · ", parts));
 
-        // Закуп второй строкой — только если заполнен.
-        if (row.HasPurchasePrice)
-            sb.AppendLine(string.Format(Loc.T("report.card.linePurchase", lang), Fmt(row.EstimateByPurchasePrice)));
+        // Оценка по себестоимости второй строкой — только если COGS задан (Фаза 1).
+        if (row.HasCogs)
+            sb.AppendLine(string.Format(Loc.T("report.card.lineCogs", lang), Fmt(row.EstimateByCogs)));
 
         sb.AppendLine();
         return sb.ToString();

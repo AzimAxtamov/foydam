@@ -33,37 +33,39 @@ public static class ConsoleReportRenderer
 
         // Заголовок таблицы.
         sb.AppendLine(string.Format(
-            "  {0,-32} {1,5} {2,5} {3,16} {4,16}",
+            "  {0,-38} {1,6} {2,16} {3,16}",
             Loc.T("report.col.sku", lang),
-            "Пот.", "Брак",
+            Loc.T("report.col.lost", lang),
             Loc.T("report.col.bySale", lang),
-            Loc.T("report.col.byPurchase", lang)));
-        sb.AppendLine("  " + new string('─', 70));
+            Loc.T("report.col.byCogs", lang)));
+        sb.AppendLine("  " + new string('─', 78));
 
         foreach (var row in r.Rows)
         {
-            var name = Truncate($"{row.ProductTitle} · {row.SkuTitle}", 32);
-            var byPurchase = row.HasPurchasePrice
-                ? Fmt(row.EstimateByPurchasePrice)
+            var name = Truncate($"{row.ProductTitle} · {row.SkuTitle}", 38);
+            var byCogs = row.HasCogs
+                ? Fmt(row.EstimateByCogs)
                 : "—";
             sb.AppendLine(string.Format(
-                "  {0,-32} {1,5} {2,5} {3,16} {4,16}",
-                name, row.Missing, row.Defected,
-                Fmt(row.EstimateBySalePrice), byPurchase));
+                "  {0,-38} {1,6} {2,16} {3,16}",
+                name, row.Lost,
+                Fmt(row.EstimateBySalePrice), byCogs));
         }
 
-        sb.AppendLine("  " + new string('─', 70));
+        sb.AppendLine("  " + new string('─', 78));
         sb.AppendLine(string.Format(
-            "  {0,-32} {1,5} {2,5} {3,16} {4,16}",
+            "  {0,-38} {1,6} {2,16} {3,16}",
             Loc.T("report.total", lang),
-            r.TotalMissing, r.TotalDefected,
-            Fmt(r.TotalEstimateBySalePrice), Fmt(r.TotalEstimateByPurchasePrice)));
+            r.TotalLost,
+            Fmt(r.TotalEstimateBySalePrice), Fmt(r.TotalEstimateByCogs)));
         sb.AppendLine(line);
         sb.AppendLine($"  {Loc.T("report.totalBySale", lang)}: {Fmt(r.TotalEstimateBySalePrice)} сум");
-        sb.AppendLine($"  {Loc.T("report.totalByPurchase", lang)}: {Fmt(r.TotalEstimateByPurchasePrice)} сум");
+        if (r.HasSkusWithoutCogs)
+            sb.AppendLine($"  {Loc.T("report.cogsNote", lang)}");
+        else
+            sb.AppendLine($"  {Loc.T("report.totalByCogs", lang)}: {Fmt(r.TotalEstimateByCogs)} сум");
 
-        if (r.HasSkusWithoutPurchasePrice)
-            sb.AppendLine($"  {Loc.T("report.purchaseNote", lang)}");
+        sb.AppendLine($"  {Loc.T("report.compensationNote", lang)}");
 
         sb.AppendLine(line);
         return sb.ToString();

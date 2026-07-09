@@ -1,5 +1,6 @@
 using ClosedXML.Excel;
 using SellerTools.App.Localization;
+using SellerTools.Core.Reports;
 using SellerTools.UzumApi.Dto;
 
 namespace SellerTools.App.Services;
@@ -18,25 +19,27 @@ public class ExcelExportService
     public record ExcelFile(string FileName, byte[] Bytes);
 
     /// <summary>
-    /// Лист потеряшек: только SKU, где потеряно+брак &gt; 0. Колонки:
-    /// SKU / Товар / Артикул / Штрихкод / Потеряно / Брак / Цена продажи /
-    /// Закуп из ЛК / Сумма по продаже / Сумма по закупу. Строка итогов формулами.
+    /// Лист потеряшек из балансовой реконсиляции (LossReport, только SKU с lost&gt;0).
+    /// Колонки: SKU / Товар / Артикул / Штрихкод / Принято / Вывезено / Продано /
+    /// Брак / Остаток / Потеряно / Цена продажи / Сумма по продаже. Строка итогов
+    /// формулами. Себестоимость (COGS) в Фазе 0 не вводится → колонки закупа нет.
     /// </summary>
-    public ExcelFile BuildLossReport(
-        long shopId, string? shopTitle, DateOnly date, IReadOnlyList<SkuDto> allSkus, string lang)
+    public ExcelFile BuildLossReport(LossReport report, string lang)
     {
-        var rows = allSkus
-            .Where(s => s.QuantityMissing + s.QuantityDefected > 0)
-            .OrderByDescending(s => (long)(s.QuantityMissing + s.QuantityDefected) * s.Price)
-            .ToList();
+        var shopId = report.ShopId;
+        var date = report.Date;
+        var rows = report.Rows; // уже отсортированы по EstimateBySalePrice убыв.
 
         using var wb = new XLWorkbook();
         var ws = wb.Worksheets.Add(Loc.T("xlsx.loss.sheet", lang));
 
-        // Шапка: название магазина + дата снапшота.
-        var shop = string.IsNullOrWhiteSpace(shopTitle) ? shopId.ToString() : $"{shopTitle} ({shopId})";
+        // Кол-во колонок листа.
+        const int cols = 12;
+
+        // Шапка: название магазина + дата.
+        var shop = string.IsNullOrWhiteSpace(report.ShopTitle) ? shopId.ToString() : $"{report.ShopTitle} ({shopId})";
         ws.Cell(1, 1).Value = string.Format(Loc.T("xlsx.loss.title", lang), shop, date.ToString("dd.MM.yyyy"));
-        ws.Range(1, 1, 1, 10).Merge();
+        ws.Range(1, 1, 1, cols).Merge();
         ws.Cell(1, 1).Style.Font.Bold = true;
         ws.Cell(1, 1).Style.Font.FontSize = 13;
 
@@ -46,9 +49,10 @@ public class ExcelExportService
         {
             Loc.T("xlsx.col.sku", lang), Loc.T("xlsx.col.product", lang),
             Loc.T("xlsx.col.article", lang), Loc.T("xlsx.col.barcode", lang),
-            Loc.T("xlsx.col.missing", lang), Loc.T("xlsx.col.defected", lang),
-            Loc.T("xlsx.col.price", lang), Loc.T("xlsx.col.purchase", lang),
-            Loc.T("xlsx.col.sumSale", lang), Loc.T("xlsx.col.sumPurchase", lang),
+            Loc.T("xlsx.col.accepted", lang), Loc.T("xlsx.col.removed", lang),
+            Loc.T("xlsx.col.sold", lang), Loc.T("xlsx.col.defected", lang),
+            Loc.T("xlsx.col.stock", lang), Loc.T("xlsx.col.lost", lang),
+            Loc.T("xlsx.col.price", lang), Loc.T("xlsx.col.sumSale", lang),
         };
         for (var c = 0; c < headers.Length; c++)
             ws.Cell(headerRow, c + 1).Value = headers[c];
@@ -59,23 +63,23 @@ public class ExcelExportService
 
         var firstDataRow = headerRow + 1;
         var r = firstDataRow;
-        foreach (var s in rows)
+        foreach (var row in rows)
         {
-            var units = s.QuantityMissing + s.QuantityDefected;
-            ws.Cell(r, 1).Value = s.SkuId;
-            ws.Cell(r, 2).Value = s.ProductTitle ?? s.SkuTitle ?? "";
-            ws.Cell(r, 3).Value = s.Article ?? s.SellerItemCode ?? "";
-            // Штрихкод — как текст (может быть длинным числом, ведущие нули важны).
-            ws.Cell(r, 4).Value = s.Barcode == 0 ? "" : s.Barcode.ToString();
+            ws.Cell(r, 1).Value = row.SkuId;
+            ws.Cell(r, 2).Value = row.ProductTitle.Length > 0 ? row.ProductTitle : row.SkuTitle;
+            ws.Cell(r, 3).Value = row.Article ?? "";
+            // Штрихкод — как текст (длинное число, ведущие нули важны).
+            ws.Cell(r, 4).Value = row.Barcode == 0 ? "" : row.Barcode.ToString();
             ws.Cell(r, 4).Style.NumberFormat.Format = "@";
-            ws.Cell(r, 5).Value = s.QuantityMissing;
-            ws.Cell(r, 6).Value = s.QuantityDefected;
-            ws.Cell(r, 7).Value = s.Price;
-            ws.Cell(r, 8).Value = s.PurchasePrice;
-            // Суммы — формулами Excel (перемножение считает сам лист).
-            ws.Cell(r, 9).FormulaA1 = $"=({FCol(5)}{r}+{FCol(6)}{r})*{FCol(7)}{r}";
-            ws.Cell(r, 10).FormulaA1 =
-                $"=IF({FCol(8)}{r}>0,({FCol(5)}{r}+{FCol(6)}{r})*{FCol(8)}{r},0)";
+            ws.Cell(r, 5).Value = row.Accepted;
+            ws.Cell(r, 6).Value = row.Removed;
+            ws.Cell(r, 7).Value = row.Sold;
+            ws.Cell(r, 8).Value = row.Defected;
+            ws.Cell(r, 9).Value = row.Stock;
+            ws.Cell(r, 10).Value = row.Lost;
+            ws.Cell(r, 11).Value = row.Price;
+            // Сумма к взысканию — формулой Excel (потеряно × цена).
+            ws.Cell(r, 12).FormulaA1 = $"={FCol(10)}{r}*{FCol(11)}{r}";
             r++;
         }
 
@@ -84,19 +88,17 @@ public class ExcelExportService
         // Строка итогов формулами SUM (даже если строк нет — SUM пустого = 0).
         var totalRow = r;
         ws.Cell(totalRow, 1).Value = Loc.T("xlsx.loss.total", lang);
-        ws.Cell(totalRow, 5).FormulaA1 = SumFormula(5, firstDataRow, lastDataRow);
-        ws.Cell(totalRow, 6).FormulaA1 = SumFormula(6, firstDataRow, lastDataRow);
-        ws.Cell(totalRow, 9).FormulaA1 = SumFormula(9, firstDataRow, lastDataRow);
         ws.Cell(totalRow, 10).FormulaA1 = SumFormula(10, firstDataRow, lastDataRow);
-        ws.Range(totalRow, 1, totalRow, 10).Style.Font.Bold = true;
-        ws.Range(totalRow, 1, totalRow, 10).Style.Border.TopBorder = XLBorderStyleValues.Medium;
+        ws.Cell(totalRow, 12).FormulaA1 = SumFormula(12, firstDataRow, lastDataRow);
+        ws.Range(totalRow, 1, totalRow, cols).Style.Font.Bold = true;
+        ws.Range(totalRow, 1, totalRow, cols).Style.Border.TopBorder = XLBorderStyleValues.Medium;
 
-        // Числовые форматы (кол-во — целые; деньги — с разделителем).
+        // Числовые форматы (кол-ва — целые; деньги — с разделителем).
         ApplyNumberFormats(ws, firstDataRow, totalRow);
 
-        // Сноска про закуп.
+        // Сноска про компенсации: если по позиции уже была компенсация — вычесть вручную.
         ws.Cell(totalRow + 2, 1).Value = Loc.T("xlsx.loss.note", lang);
-        ws.Range(totalRow + 2, 1, totalRow + 2, 10).Merge();
+        ws.Range(totalRow + 2, 1, totalRow + 2, cols).Merge();
         ws.Cell(totalRow + 2, 1).Style.Font.Italic = true;
         ws.Cell(totalRow + 2, 1).Style.Font.FontColor = XLColor.FromHtml("#666666");
 
@@ -160,13 +162,14 @@ public class ExcelExportService
 
     private static void ApplyNumberFormats(IXLWorksheet ws, int firstDataRow, int totalRow)
     {
-        // Кол-во (5,6) — целые; деньги (7..10) — с разделителем разрядов.
+        // Кол-ва (5..10: принято/вывезено/продано/брак/остаток/потеряно) — целые;
+        // деньги (11 цена, 12 сумма) — с разделителем разрядов.
         for (var row = firstDataRow; row <= totalRow; row++)
         {
-            ws.Cell(row, 5).Style.NumberFormat.Format = "0";
-            ws.Cell(row, 6).Style.NumberFormat.Format = "0";
-            for (var col = 7; col <= 10; col++)
-                ws.Cell(row, col).Style.NumberFormat.Format = NumFmt;
+            for (var col = 5; col <= 10; col++)
+                ws.Cell(row, col).Style.NumberFormat.Format = "0";
+            ws.Cell(row, 11).Style.NumberFormat.Format = NumFmt;
+            ws.Cell(row, 12).Style.NumberFormat.Format = NumFmt;
         }
     }
 

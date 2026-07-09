@@ -1,8 +1,14 @@
 namespace SellerTools.Core.Reports;
 
 /// <summary>
-/// Строка отчёта «Сколько Uzum вам должен» по одному SKU
-/// (только те, где missing + defected &gt; 0).
+/// Строка отчёта «Сколько Uzum вам должен» по одному SKU (только те, где lost &gt; 0).
+///
+/// lost — результат балансовой реконсиляции на 1 SKU:
+///   lost = accepted − removed − sold − defected − stock
+/// где accepted (принято складом, /v1/invoice ACCEPTED), removed (физвывоз,
+/// /v1/return по legacy-правилу), sold=quantitySold (нетто), defected=quantityDefected,
+/// stock=quantityActive (всё из карточки SKU). Отрицательный lost клампится в 0
+/// (рассинхрон снапшота, не потеря).
 /// </summary>
 public class LossReportRow
 {
@@ -10,30 +16,43 @@ public class LossReportRow
     public string SkuTitle { get; set; } = "";
     public string ProductTitle { get; set; } = "";
 
-    public int Missing { get; set; }
+    /// <summary>Артикул/код продавца (для Excel).</summary>
+    public string? Article { get; set; }
+
+    /// <summary>Штрихкод (для Excel). 0 = нет.</summary>
+    public long Barcode { get; set; }
+
+    /// <summary>Потеряно складом Uzum по балансу (уже склампленное в 0 снизу).</summary>
+    public int Lost { get; set; }
+
+    /// <summary>Компоненты баланса — для Excel/аудита (можно показать в детализации).</summary>
+    public int Accepted { get; set; }
+    public int Removed { get; set; }
+    public int Sold { get; set; }
     public int Defected { get; set; }
+    public int Stock { get; set; }
 
-    /// <summary>Всего проблемных единиц = Missing + Defected.</summary>
-    public int TotalUnits => Missing + Defected;
-
+    /// <summary>Цена продажи (СУМ) из карточки.</summary>
     public long Price { get; set; }
-    public long PurchasePrice { get; set; }
-
-    /// <summary>Оценка по цене продажи: TotalUnits × Price.</summary>
-    public long EstimateBySalePrice => TotalUnits * Price;
 
     /// <summary>
-    /// Оценка по закупу: TotalUnits × PurchasePrice, только если закуп &gt; 0.
-    /// Иначе 0 (закуп в ЛК может быть не заполнен).
+    /// Себестоимость (COGS), введённая селлером у нас. В Фазе 0 ввода нет → всегда 0
+    /// («закуп не указан»). purchasePrice из API НЕ подставляем (грязный).
     /// </summary>
-    public long EstimateByPurchasePrice => PurchasePrice > 0 ? TotalUnits * PurchasePrice : 0;
+    public long Cogs { get; set; }
 
-    /// <summary>Заполнен ли закуп в ЛК для этого SKU.</summary>
-    public bool HasPurchasePrice => PurchasePrice > 0;
+    /// <summary>Оценка потери по цене продажи: Lost × Price.</summary>
+    public long EstimateBySalePrice => Lost * Price;
+
+    /// <summary>Оценка потери по себестоимости: Lost × Cogs, только если Cogs &gt; 0.</summary>
+    public long EstimateByCogs => Cogs > 0 ? Lost * Cogs : 0;
+
+    /// <summary>Задан ли COGS (введён селлером). В Фазе 0 — всегда false.</summary>
+    public bool HasCogs => Cogs > 0;
 }
 
 /// <summary>
-/// Итоговый отчёт по магазину: строки + суммы двумя оценками.
+/// Итоговый отчёт по магазину: строки + суммы.
 /// </summary>
 public class LossReport
 {
@@ -46,16 +65,14 @@ public class LossReport
     /// <summary>Сколько SKU всего просмотрено (для контекста).</summary>
     public int TotalSkusScanned { get; set; }
 
-    public int TotalMissing => Rows.Sum(r => r.Missing);
-    public int TotalDefected => Rows.Sum(r => r.Defected);
-    public int TotalProblemUnits => Rows.Sum(r => r.TotalUnits);
+    public int TotalLost => Rows.Sum(r => r.Lost);
 
-    /// <summary>Итог по цене продажи.</summary>
+    /// <summary>Итог к взысканию по цене продажи.</summary>
     public long TotalEstimateBySalePrice => Rows.Sum(r => r.EstimateBySalePrice);
 
-    /// <summary>Итог по закупу (только SKU с заполненным закупом).</summary>
-    public long TotalEstimateByPurchasePrice => Rows.Sum(r => r.EstimateByPurchasePrice);
+    /// <summary>Итог по себестоимости (только SKU с заданным COGS). В Фазе 0 — 0.</summary>
+    public long TotalEstimateByCogs => Rows.Sum(r => r.EstimateByCogs);
 
-    /// <summary>Есть ли хоть один SKU без заполненного закупа (для пометки в отчёте).</summary>
-    public bool HasSkusWithoutPurchasePrice => Rows.Any(r => !r.HasPurchasePrice);
+    /// <summary>Есть ли хоть один SKU без заданного COGS (для пометки в отчёте).</summary>
+    public bool HasSkusWithoutCogs => Rows.Any(r => !r.HasCogs);
 }
