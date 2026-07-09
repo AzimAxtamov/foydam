@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using SellerTools.UzumApi.Diagnostics;
 using SellerTools.UzumApi.Dto;
 
@@ -12,6 +13,10 @@ namespace SellerTools.UzumApi;
 public class MockUzumApiClient : IUzumApiClient
 {
     private const int Seed = 20260704; // фиксированный seed → воспроизводимость
+
+    // Непустая дата сборки для возвратов (JsonElement — как у живого API любого типа).
+    private static readonly JsonElement MockAssembledDate =
+        JsonDocument.Parse("\"2026-06-01T10:00:00Z\"").RootElement.Clone();
 
     // Пары «товар / вариант» на смеси русского и узбекского.
     private static readonly (string Product, string Sku)[] Catalog =
@@ -221,7 +226,7 @@ public class MockUzumApiClient : IUzumApiClient
             {
                 Id = id++,
                 TotalPackedAmount = useAmount ? 0 : plan.Removed,
-                AssembledDate = useAmount ? null : "2026-06-01T10:00:00Z",
+                AssembledDate = useAmount ? null : MockAssembledDate,
                 ReturnItems = new List<SellerReturnItemDto>
                 {
                     new()

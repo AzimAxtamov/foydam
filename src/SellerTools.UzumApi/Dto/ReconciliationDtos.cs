@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace SellerTools.UzumApi.Dto;
@@ -66,9 +67,20 @@ public class SellerReturnDto
     [JsonPropertyName("id")]
     public long Id { get; set; }
 
-    /// <summary>Дата сборки возврата. null при legacy-правиле → берём amount, не packedAmount.</summary>
+    /// <summary>
+    /// Дата сборки возврата. Живой API отдаёт её РАЗНЫМИ типами (строка ISO, epoch
+    /// millis числом, либо null), поэтому принимаем сырой JsonElement — иначе STJ
+    /// падает "could not be converted to System.String" на числовом значении.
+    /// Для legacy-правила важен только факт наличия/отсутствия (null).
+    /// </summary>
     [JsonPropertyName("assembledDate")]
-    public string? AssembledDate { get; set; }
+    public JsonElement? AssembledDate { get; set; }
+
+    /// <summary>Есть ли непустая дата сборки (учитывает и число, и строку, и JSON null).</summary>
+    [JsonIgnore]
+    public bool HasAssembledDate =>
+        AssembledDate is { ValueKind: not JsonValueKind.Null and not JsonValueKind.Undefined } el
+        && !(el.ValueKind == JsonValueKind.String && string.IsNullOrEmpty(el.GetString()));
 
     /// <summary>Общее упакованное кол-во по возврату. 0 при legacy-правиле.</summary>
     [JsonPropertyName("totalPackedAmount")]
@@ -79,11 +91,11 @@ public class SellerReturnDto
 
     /// <summary>
     /// Legacy-правило вывоза: если по родительскому возврату totalPackedAmount==0
-    /// И assembledDate==null → в реальности упакованное кол-во не проставлено,
+    /// И assembledDate отсутствует → в реальности упакованное кол-во не проставлено,
     /// берём amount строки; иначе packedAmount.
     /// </summary>
     [JsonIgnore]
-    public bool UseAmount => TotalPackedAmount == 0 && string.IsNullOrEmpty(AssembledDate);
+    public bool UseAmount => TotalPackedAmount == 0 && !HasAssembledDate;
 }
 
 public class SellerReturnItemDto
