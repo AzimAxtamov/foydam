@@ -9,9 +9,9 @@ using SellerTools.Core.Entities;
 namespace SellerTools.App;
 
 /// <summary>
-/// Smoke-тест В1: поднимает схему БД, гарантирует мок-магазин, строит отчёт
-/// «Сколько Uzum вам должен» и печатает его в консоль. Снапшоты за сегодня
-/// оседают в Postgres.
+/// Smoke-тест: применяет миграции, гарантирует мок-магазин, СИНКАЕТ его в Postgres
+/// (UzumSyncService), затем строит отчёт «Сколько Uzum вам должен» ИЗ БД и печатает
+/// в консоль. Модель «синк → Postgres → отчёт из БД» в миниатюре.
 /// </summary>
 public class SmokeReportService : IHostedService
 {
@@ -35,18 +35,22 @@ public class SmokeReportService : IHostedService
     {
         using var scope = _sp.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var crypto = scope.ServiceProvider.GetRequiredService<ICryptoService>();
+        var sync = scope.ServiceProvider.GetRequiredService<UzumSyncService>();
         var reportSvc = scope.ServiceProvider.GetRequiredService<LossReportService>();
 
-        // В1: EnsureCreated (миграции — позже).
-        _log.LogInformation("Инициализация схемы БД…");
-        await db.Database.EnsureCreatedAsync(ct);
+        _log.LogInformation("Инициализация схемы БД (миграции)…");
+        await MigrationBaseline.EnsureAsync(db, _log);
+        await db.Database.MigrateAsync(ct);
 
-        await EnsureMockShopAsync(db, ct);
+        var shop = await EnsureMockShopAsync(db, crypto, ct);
 
-        // Ключ мок игнорирует; в Real сюда пойдёт расшифрованный ключ из Shop.
-        var report = await reportSvc.BuildAsync(
-            MockShopId, apiKey: "mock-key", shopTitle: MockShopTitle, ct: ct);
+        // Синк мок-магазина в Postgres (накладные + возвраты + карточки).
+        var syncResult = await sync.SyncShopAsync(shop, ct);
+        _log.LogInformation("Синк мок-магазина: ok={Ok} error={Err}", syncResult.Ok, syncResult.Error);
 
+        // Отчёт строится ТОЛЬКО из БД.
+        var report = await reportSvc.BuildAsync(shop, ct);
         Console.WriteLine(ConsoleReportRenderer.Render(report, lang: "ru"));
 
         var snapCount = await db.SkuDailySnapshots
@@ -56,25 +60,27 @@ public class SmokeReportService : IHostedService
             "В Postgres строк снапшотов за сегодня по магазину {ShopId}: {Count}",
             MockShopId, snapCount);
 
-        // Smoke-тест отработал — гасим хост, чтобы процесс завершился.
         _lifetime.StopApplication();
     }
 
     public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
 
-    private static async Task EnsureMockShopAsync(AppDbContext db, CancellationToken ct)
+    private static async Task<Shop> EnsureMockShopAsync(
+        AppDbContext db, ICryptoService crypto, CancellationToken ct)
     {
         if (!await db.Sellers.AnyAsync(x => x.Id == MockSellerId, ct))
             db.Sellers.Add(new Seller { Id = MockSellerId, Language = "ru" });
 
-        if (!await db.Shops.AnyAsync(x => x.Id == MockShopId, ct))
-            db.Shops.Add(new Shop
-            {
-                Id = MockShopId,
-                SellerId = MockSellerId,
-                Title = MockShopTitle,
-            });
+        var shop = await db.Shops.FirstOrDefaultAsync(x => x.Id == MockShopId, ct);
+        if (shop is null)
+        {
+            shop = new Shop { Id = MockShopId, SellerId = MockSellerId, Title = MockShopTitle };
+            db.Shops.Add(shop);
+        }
+        // Ключ мок игнорирует, но SyncShopAsync требует непустой шифртекст.
+        shop.ApiKeyEncrypted = crypto.Encrypt("mock-key");
 
         await db.SaveChangesAsync(ct);
+        return shop;
     }
 }

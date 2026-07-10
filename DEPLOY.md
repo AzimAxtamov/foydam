@@ -160,6 +160,59 @@ tail -f logs/sellertools-*.log
 
 ---
 
+## Миграции БД и baseline существующей прод-БД
+
+С перехода на модель «синк → Postgres → отчёт из БД» схема управляется **EF-миграциями**
+(`InitialCreate` + `AddSyncStorage`), а не прежним `EnsureCreated`. При старте приложение
+само вызывает `Migrate()` — новые таблицы (`Invoices`, `Returns`, `Skus`, `ShopSyncStates`
+и др.) создаются автоматически.
+
+⚠️ **Если прод-БД была создана СТАРОЙ версией** (на `EnsureCreated`), у неё есть таблицы
+`Sellers`/`Shops`/…, но НЕТ таблицы `__EFMigrationsHistory`. Прямой `Migrate()` попытался
+бы создать уже существующие таблицы и упал бы с `relation "Sellers" already exists`.
+
+**Приложение обрабатывает это автоматически** ([`MigrationBaseline`](src/SellerTools.App/Data/MigrationBaseline.cs)):
+при старте, если найдены legacy-таблицы без строки `InitialCreate` в истории — оно
+помечает `InitialCreate` применённой (baseline), и `Migrate()` накатывает **только**
+`AddSyncStorage`. Отдельных действий не требуется — просто выкати новый образ.
+
+Проверить, что baseline прошёл и обе миграции применены:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  psql -U sellertools -d sellertools -c \
+  'SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId";'
+```
+
+Ожидаемо: две строки — `..._InitialCreate` и `..._AddSyncStorage`.
+
+**Ручной baseline** (если понадобится сделать вручную — обычно НЕ нужно):
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  psql -U sellertools -d sellertools -c \
+  "CREATE TABLE IF NOT EXISTS \"__EFMigrationsHistory\"(\"MigrationId\" varchar(150) PRIMARY KEY, \"ProductVersion\" varchar(32) NOT NULL);
+   INSERT INTO \"__EFMigrationsHistory\" VALUES ('20260710071528_InitialCreate','8.0.0') ON CONFLICT DO NOTHING;"
+```
+
+### Приёмка: первичные синки существующих магазинов
+
+После первого старта на новой архитектуре приложение находит магазины **без состояния
+синка** ([`StartupProvisioner`](src/SellerTools.App/Services/StartupProvisioner.cs)),
+помечает их `Never` и ставит первичные полные синки в очередь `uzum-sync` **с интервалом
+2 минуты** между магазинами (чтобы не завалить Uzum). Первый отчёт по магазину придёт
+после завершения его синка. Проверить состояние:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  psql -U sellertools -d sellertools -c \
+  'SELECT "ShopId","Status","LastFullSyncAt","Inactive" FROM "ShopSyncStates";'
+```
+
+`Status`: 0=Never, 1=Syncing, 2=Ready, 3=Error.
+
+---
+
 ## Автодеплой через GitHub Actions (CI/CD)
 
 Настроен workflow `.github/workflows/deploy.yml`: на каждый push в `main` →

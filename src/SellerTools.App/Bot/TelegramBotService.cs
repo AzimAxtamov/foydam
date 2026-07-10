@@ -1,3 +1,5 @@
+using Hangfire;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -378,6 +380,7 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         using var scope = _scopes.CreateScope();
         var sellers = scope.ServiceProvider.GetRequiredService<SellerService>();
         var reportSvc = scope.ServiceProvider.GetRequiredService<LossReportService>();
+        var coordinator = scope.ServiceProvider.GetRequiredService<ReportCoordinator>();
 
         var shops = await sellers.GetShopsAsync(userId, ct);
         if (shops.Count == 0)
@@ -389,40 +392,43 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         // Пока один магазин на селлера; берём первый.
         var shop = shops[0];
 
-        // Балансовая реконсиляция строится из свежих данных API (товары + накладные
-        // + возвраты), поэтому предупреждаем, что сбор занимает время.
-        await bot.SendMessage(chatId, Loc.T("bot.report.building", lang), cancellationToken: ct);
-
-        LossReport report;
-        try
+        // Отчёт — ТОЛЬКО из БД. Координатор решает: свежо → строим inline; иначе ставит
+        // синк (полный при Never / дельта при устаревании) и доставку по завершении.
+        var decision = await coordinator.RequestReportAsync(chatId, shop.Id, lang, ct);
+        switch (decision)
         {
-            report = await reportSvc.BuildAsync(shop, ct);
+            case ReportDecision.Ready:
+                var report = await reportSvc.BuildAsync(shop, ct);
+                await bot.SendMessage(chatId, BotReportRenderer.Render(report, lang),
+                    parseMode: ParseMode.Markdown, replyMarkup: MainMenu(lang), cancellationToken: ct);
+                break;
+            case ReportDecision.FirstSync:
+                await bot.SendMessage(chatId, Loc.T("bot.report.firstSync", lang),
+                    replyMarkup: MainMenu(lang), cancellationToken: ct);
+                break;
+            case ReportDecision.Refreshing:
+                await bot.SendMessage(chatId, Loc.T("bot.report.refreshing", lang),
+                    replyMarkup: MainMenu(lang), cancellationToken: ct);
+                break;
+            case ReportDecision.Inactive:
+                await bot.SendMessage(chatId, Loc.T("bot.report.shopInactive", lang),
+                    replyMarkup: MainMenu(lang), cancellationToken: ct);
+                break;
         }
-        catch (Exception ex)
-        {
-            await bot.SendMessage(chatId,
-                string.Format(Loc.T("bot.report.syncFailed", lang), ex.Message),
-                cancellationToken: ct);
-            _log.LogWarning(ex, "Отчёт по магазину {ShopId} не построен", shop.Id);
-            return;
-        }
-
-        await bot.SendMessage(chatId, BotReportRenderer.Render(report, lang),
-            parseMode: ParseMode.Markdown, replyMarkup: MainMenu(lang), cancellationToken: ct);
     }
 
     /// <summary>
-    /// Excel-выгрузка: loss=true — потеряшки, loss=false — товары+ИКПУ.
-    /// Тянет свежие SKU из API, формирует .xlsx и шлёт документом + подпись.
+    /// Excel-выгрузка: loss=true — потеряшки, loss=false — товары+ИКПУ. ТОЛЬКО из БД.
+    /// Свежо → строим и шлём inline; иначе синк + доставка файла по завершении.
     /// </summary>
     private async Task OnExcelAsync(
         ITelegramBotClient bot, long chatId, long userId, string lang, bool loss, CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
         var sellers = scope.ServiceProvider.GetRequiredService<SellerService>();
-        var syncSvc = scope.ServiceProvider.GetRequiredService<ShopSyncService>();
         var reportSvc = scope.ServiceProvider.GetRequiredService<LossReportService>();
         var excel = scope.ServiceProvider.GetRequiredService<ExcelExportService>();
+        var coordinator = scope.ServiceProvider.GetRequiredService<ReportCoordinator>();
 
         var shops = await sellers.GetShopsAsync(userId, ct);
         if (shops.Count == 0)
@@ -432,17 +438,35 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         }
         var shop = shops[0];
 
-        await bot.SendMessage(chatId, Loc.T("bot.excel.building", lang), cancellationToken: ct);
+        var decision = await coordinator.RequestExcelAsync(chatId, shop.Id, lang, loss, ct);
+        if (decision == ReportDecision.FirstSync)
+        {
+            await bot.SendMessage(chatId, Loc.T("bot.report.firstSync", lang),
+                replyMarkup: MainMenu(lang), cancellationToken: ct);
+            return;
+        }
+        if (decision == ReportDecision.Refreshing)
+        {
+            await bot.SendMessage(chatId, Loc.T("bot.report.refreshing", lang),
+                replyMarkup: MainMenu(lang), cancellationToken: ct);
+            return;
+        }
+        if (decision == ReportDecision.Inactive)
+        {
+            await bot.SendMessage(chatId, Loc.T("bot.report.shopInactive", lang),
+                replyMarkup: MainMenu(lang), cancellationToken: ct);
+            return;
+        }
 
+        // Ready — строим из БД и шлём сразу.
+        await bot.SendMessage(chatId, Loc.T("bot.excel.building", lang), cancellationToken: ct);
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         ExcelExportService.ExcelFile file;
         string caption;
-
         try
         {
             if (loss)
             {
-                // Потеряшки — из балансовой реконсиляции (товары + накладные + возвраты).
                 var report = await reportSvc.BuildAsync(shop, ct);
                 file = excel.BuildLossReport(report, lang);
                 caption = report.Rows.Count > 0
@@ -451,8 +475,7 @@ public class TelegramBotService : IHostedService, IUpdateHandler
             }
             else
             {
-                // Товары + ИКПУ — из свежих SKU (штрихкод/артикул/ИКПУ).
-                var skus = await syncSvc.GetFreshSkusAsync(shop, ct);
+                var skus = await reportSvc.GetSkusAsync(shop.Id, ct);
                 file = excel.BuildIkpuList(shop.Id, shop.Title, today, skus, lang);
                 caption = string.Format(Loc.T("bot.excel.ikpuCaption", lang), skus.Count);
             }
@@ -479,7 +502,8 @@ public class TelegramBotService : IHostedService, IUpdateHandler
     {
         using var scope = _scopes.CreateScope();
         var sellers = scope.ServiceProvider.GetRequiredService<SellerService>();
-        var syncSvc = scope.ServiceProvider.GetRequiredService<ShopSyncService>();
+        var db = scope.ServiceProvider.GetRequiredService<Data.AppDbContext>();
+        var jobs = scope.ServiceProvider.GetRequiredService<Hangfire.IBackgroundJobClient>();
 
         var shops = await sellers.GetShopsAsync(userId, ct);
         if (shops.Count == 0)
@@ -489,30 +513,22 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         }
         var shop = shops[0];
 
-        var lastSync = await syncSvc.GetLastSyncAtAsync(shop.Id, ct);
-        if (lastSync is { } last && DateTimeOffset.UtcNow - last < RefreshThrottle)
+        // Троттлинг по последнему синку (LastDeltaSyncAt из состояния).
+        var state = await db.ShopSyncStates
+            .FirstOrDefaultAsync(x => x.ShopId == shop.Id, ct);
+        var last = state?.LastDeltaSyncAt ?? state?.LastFullSyncAt;
+        if (last is { } l && DateTimeOffset.UtcNow - l < RefreshThrottle)
         {
-            var nextAt = last + RefreshThrottle;
+            var nextAt = l + RefreshThrottle;
             await bot.SendMessage(chatId, string.Format(
-                Loc.T("bot.refresh.throttled", lang), LocalTime(last), LocalTime(nextAt)),
+                Loc.T("bot.refresh.throttled", lang), LocalTime(l), LocalTime(nextAt)),
                 replyMarkup: MainMenu(lang), cancellationToken: ct);
             return;
         }
 
-        await bot.SendMessage(chatId, Loc.T("bot.refresh.running", lang), cancellationToken: ct);
-
-        var result = await syncSvc.SyncShopAsync(shop, ct);
-        if (!result.Ok)
-        {
-            await bot.SendMessage(chatId,
-                string.Format(Loc.T("bot.report.syncFailed", lang), result.Error),
-                replyMarkup: MainMenu(lang), cancellationToken: ct);
-            return;
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        await bot.SendMessage(chatId, string.Format(
-            Loc.T("bot.refresh.done", lang), result.SkusSynced, LocalTime(now)),
+        // Синк — в очередь uzum-sync (фон). Пользователю говорим, что запустили.
+        jobs.Enqueue<Jobs.UzumSyncJob>(j => j.SyncShopAsync(shop.Id, CancellationToken.None));
+        await bot.SendMessage(chatId, Loc.T("bot.refresh.queued", lang),
             replyMarkup: MainMenu(lang), cancellationToken: ct);
     }
 

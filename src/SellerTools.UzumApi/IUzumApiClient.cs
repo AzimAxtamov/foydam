@@ -57,6 +57,29 @@ public interface IUzumApiClient
         CancellationToken ct = default);
 
     /// <summary>
+    /// Одна страница накладных (GET /v1/invoice) + rate-limit заголовки. Для синка:
+    /// дельта управляет пагинацией сама (идёт с page=0 до точки останова).
+    /// size по спеке максимум 50.
+    /// </summary>
+    Task<ApiPage<InvoiceDto>> GetInvoicesPageAsync(
+        long shopId,
+        string apiKey,
+        int page,
+        int size = 50,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Одна страница возвратов (GET /v1/return) + rate-limit заголовки. Для синка.
+    /// size по спеке максимум 50.
+    /// </summary>
+    Task<ApiPage<SellerReturnDto>> GetReturnsPageAsync(
+        long shopId,
+        string apiKey,
+        int page,
+        int size = 50,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Диагностика: одиночный сырой GET к эндпоинту. Возвращает статус,
     /// rate-limit заголовки и начало тела. Не ретраит, не бросает исключения —
     /// сетевые ошибки кладёт в ProbeResult.Error. Нужно для проверки живым ключом

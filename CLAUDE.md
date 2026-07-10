@@ -3,7 +3,7 @@
 > **Текущее состояние (обновлять после каждого вечера!).**
 > Сделаны вечера **В1, В3, В4, В5, В7** (см. Роадмап). Работает: Telegram-бот
 > (@foydam_bot) с приёмом ключа, авто-определением магазина, карточным отчётом,
-> двумя Excel-выгрузками, кнопкой «Обновить»; ночной синк снапшотов на Hangfire;
+> двумя Excel-выгрузками, кнопкой «Обновить»; ночной синк на Hangfire;
 > production-обвязка (Docker, бэкапы, админ-алерты, Serilog) с `DEPLOY.md`.
 > **В2 почти закрыт [ЖИВОЙ КЛЮЧ]:** канон-путь `/api/seller-openapi/`, деньги = СУМ,
 > даты = epoch millis (и в expenses тоже, спека врала), finance/* доступны read-only
@@ -13,9 +13,19 @@
 > заменён на балансовую реконсиляцию `lost = accepted − removed − sold − defected −
 > stock` из `/v1/invoice` (ACCEPTED) + `/v1/return` (legacy-правило) + карточки.
 > Валидировано на живом бета-селлере. Полная спека — `docs/loss-reconciliation.md`.
-> Отчёт строится из свежих API-данных (не из снапшота — там нет accepted/removed).
 > COGS = только введённый селлером (в Фазе 0 нет → «закуп не указан»), purchasePrice
 > из API грязный, не подставляем. HTTP-клиент: параллелизм ≤3, ретрай на socket reset.
+> **[СИНК → POSTGRES → ОТЧЁТ ИЗ БД] (НОВОЕ, заменило живой пул на каждый клик):**
+> отчёт и обе Excel-выгрузки читают ТОЛЬКО Postgres — ноль живых запросов к Uzum в
+> обработчике кнопки. Принятые накладные и завершённые возвраты — неизменяемые факты:
+> качаем один раз (`UzumSyncService`), храним (`Invoices`/`Returns`/`Skus`/`ShopSyncStates`),
+> дальше только дельта. Синк — в отдельной Hangfire-очереди `uzum-sync` (РОВНО 3 воркера,
+> глоб. лимит параллелизма; внутри джоба запросы строго последовательны). Схема — на
+> **EF-миграциях** (ушли от `EnsureCreated`), baseline прод-БД автоматом
+> (`MigrationBaseline`). sync_state: Never→полный синк+«собираю первый раз», старше
+> порога (6ч)→дельта, иначе мгновенно из БД. Подвал «Данные на …». Валидировано на
+> живом Postgres (`syncsmoke`/`smoke`): полный+дельта идемпотентны, отчёт из БД = 6 SKU
+> потерь. Полные правила — раздел «Синхронизация и хранилище».
 > **Открыто:** В6 (беты на живых селлерах), деплой на реальный VPS. По умолчанию
 > `UzumApi:Mode=Mock`. Репозиторий приватный: `AzimAxtamov/foydam`, клон по SSH.
 >
@@ -427,6 +437,18 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
 Пагинация `/v1/invoice` и `/v1/return`: голый JSON-массив (не envelope), `size=50`,
 `page` с 0, до неполной страницы (у активных селлеров 70+; `totalElements` нет).
 
+**⚠️ [СИНК → БД] Расчёт теперь идёт ИЗ POSTGRES, не из живого API на каждый клик.**
+`accepted` = сумма `QuantityAccepted` строк `InvoiceItems`, у которых родительская
+накладная `IsTerminal` (== ACCEPTED); `removed` = по `ReturnRecord.UseAmount` (legacy-
+правило зафиксировано ПРИ СИНКЕ). Матч — по `SkuKeyNorm` (единый `SkuKey.Normalize`,
+вынесен в Core; пишется в БД из `card.skuFullTitle` и `invoice/return.skuTitle`).
+Поля накладных/возвратов взяты из `docs/uzum-openapi.json` (схемы `InvoiceWithSkuListDto`,
+`SellerReturnDto`): `invoiceNumber(int64)`, `dateAccepted/completedDate/canceledDate
+(date-time)`, `return.dateCreated(date-time)`. ⚠️ `invoice.dateCreated` — в спеке
+`string` БЕЗ format (формат неизвестен: epoch или ISO), парсим ТОЛЕРАНТНО (`FlexibleDate`),
+`TODO(verify-live)`. Иерархия доверия: **живой JSON > спека** — непарсибельная дата →
+warning + null (при null в `dateCreated` дельта фолбэчит на полный синк).
+
 **Прибыль (Фаза 1, для архитектурного учёта):**
 `sellerPrice×qtyNet − commission − logisticDeliveryFee − нашCOGS×qtyNet − доля(expenses)`,
 где qtyNet = amount − amountReturns (нетто/брутто уточнить живым ключом).
@@ -446,14 +468,80 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
     `MockUzumApiClient` (детерминированный, seed; ~25 SKU, у 6 — баланс с потерей;
     накладные+возвраты синтезируются из товаров, баланс сходится).
   - `SellerTools.App` — хост (WebApplication для дашборда), DI, EF, бот, джобы,
-    Excel, шифрование, алерты, диагностика.
+    Excel, шифрование, алерты, диагностика. Ключевое для синка: `UzumSyncService`
+    (полный/дельта синк), `SyncStorage` (идемпотентный upsert по API id), `UzumSyncJob`
+    (Hangfire, очередь `uzum-sync`), `ReportCoordinator` (never/stale/fresh → синк или
+    inline), `ReportDeliveryJob`+`BotNotifier` (доставка отчёта после синка),
+    `StartupProvisioner` (приёмка существующих магазинов), `MigrationBaseline`.
 - Сущности: `Seller` (Id = Telegram user id, Language ru|uz),
   `Shop` (Id = Uzum shopId, ApiKeyEncrypted, KeyExpiresAt, Title),
   `SkuDailySnapshot` (**ров данных**: ежедневный срез quantityMissing/Defected/…
   по каждому SKU — API истории не отдаёт, копим сами; уникальный индекс
-  ShopId+Date+SkuId), `SyncCursor` (ShopId+Kind составной ключ).
-- Режим API: `UzumApi:Mode = Mock | Real` в appsettings.
+  ShopId+Date+SkuId), `SyncCursor` (ШИ+Kind — ⚠️ **legacy, не используется**, заменён
+  на `ShopSyncState`; таблицу не дропаем ради безопасности миграций).
+- **[СИНК → БД] Сущности хранилища** (Core): `InvoiceRecord`(PK=API id)+`InvoiceItem`,
+  `ReturnRecord`(PK=API id)+`ReturnItem`, `SkuRecord`(PK ShopId+SkuId — последний срез
+  карточки), `ShopSyncState`(PK ShopId: Status never|syncing|ready|error, курсоры
+  full/delta/cards, Inactive, LastError). Все `SkuKeyNorm` — через единый `SkuKey.Normalize`.
+- **EF-миграции** (ушли от `EnsureCreated`): `InitialCreate` (старая схема) +
+  `AddSyncStorage` (новые таблицы + индексы `SkuKeyNorm`, `ShopId+DateCreated`,
+  `ShopId+IsTerminal`). `MigrationBaseline` — авто-baseline прод-БД (legacy-таблицы без
+  истории → помечает InitialCreate применённой; проверяет НАЛИЧИЕ СТРОКИ, не таблицы —
+  иначе прерванная миграция ломала повторный старт). `DesignTimeDbContextFactory` для
+  `dotnet-ef` (локальный тул, манифест `dotnet-tools.json`).
+- Режим API: `UzumApi:Mode = Mock | Real` в appsettings. Настройки синка — секция `Sync`
+  (`SyncOptions`): `RateLimitDailyFloor`(5000), `CardsFreshnessHours`/`DeltaFreshnessHours`(6),
+  `DeltaOverscanPages`(1), `MaxPagesPerSync`(1000).
 - Деньги: `long`. Мок — детерминированный (фиксированный seed).
+
+### Синхронизация и хранилище (модель «синк → Postgres → отчёт из БД»)
+
+**Зачем:** прежде отчёт на КАЖДЫЙ клик тянул всю историю из Uzum (70+ страниц
+накладных) — минуты ожидания, не масштабируется. Теперь синк один раз наполняет
+Postgres, отчёт читает БД. Принятые накладные (ACCEPTED) и завершённые/отменённые
+возвраты — **неизменяемые факты**: качаем один раз, храним, дальше только дельта.
+
+**Очередь `uzum-sync` — РОВНО 3 воркера** (отдельный `AddHangfireServer`, глобальный
+лимит параллелизма к Uzum на процесс). Внутри джоба запросы **строго последовательны**,
+никаких `Parallel`/`Task.WhenAll` к API. Доставка отчёта/Excel — continuation в
+`default`-очереди (там нет запросов к Uzum).
+
+**Полный синк** (`ShopSyncState.Status == Never`): все страницы `/v1/invoice`,
+`/v1/return`, карточек → БД. **Guard порядка:** сравниваем `dateCreated` первой записи
+page0 и page1; если page1 НОВЕЕ page0 → API отдаёт по возрастанию, а дельта рассчитана
+на «новые сверху» → **бросаем исключение** (не синкаем молча).
+
+**Дельта-синк:** записи приходят свежими сверху. Идём с page=0, останавливаемся, когда
+страница целиком из уже сохранённых **терминальных** записей (по API id). **Pending**
+(накладные не ACCEPTED; возвраты без `completedDate`/`canceledDate`) — пагинируем глубже
+точки останова до `dateCreated` самого старого pending (+ `DeltaOverscanPages`
+страховки), чтобы поймать смену статуса. `MaxPagesPerSync` — потолок от бесконечной
+пагинации. Терминальность накладной = только ACCEPTED (иных конечных статусов в спеке нет).
+
+**Идемпотентность (`SyncStorage`):** upsert по API id (накладные/возвраты — PK=Id,
+карточки — PK ShopId+SkuId). Повторный синк тех же записей НЕ плодит дублей (проверено
+`syncsmoke`: счётчики после дельты не растут). Дочерние `items` при обновлении родителя
+пересоздаются. `UseAmount` (legacy-правило) и `IsTerminal` фиксируются ПРИ СОХРАНЕНИИ.
+
+**Карточки:** освежаются перед отчётом, если старше `CardsFreshnessHours` (дефолт 6ч).
+Ночная джоба `UzumSyncJob.NightlyAllAsync` (03:00 Ташкент, очередь `uzum-sync`) —
+полный проход всех магазинов + запись `SkuDailySnapshot`, со случайным сдвигом
+0–30с между магазинами. Пропускает `Inactive`.
+
+**Rate-limit:** читаем `x-ratelimit-remaining-per-day`; ниже `RateLimitDailyFloor`
+(дефолт 5000, АБСОЛЮТНОЕ число) → пауза несрочных синков + админ-алерт.
+
+**403 «Shop is not available»** → `ShopUnavailableException` → магазин помечается
+`Inactive`, пропускается в ночных синках, юзеру показываем дружелюбное `bot.report.shopInactive`.
+
+**Обработчик кнопки (`ReportCoordinator`):** `Never`/нет состояния → полный синк +
+continuation-доставка, ответ «собираю первый раз». Данные старше `DeltaFreshnessHours`
+→ дельта + доставка, ответ «обновляю». Свежо → строим inline из БД. `Inactive` → отчёт
+не строим. Кнопка «Обновить» ставит дельту в фон (не блокирует), троттл по `LastDeltaSyncAt`.
+
+**Приёмка (`StartupProvisioner`):** при старте магазинам БЕЗ `ShopSyncState` (существовали
+до перехода) проставляется `Never` и ставятся первичные синки С ИНТЕРВАЛОМ 2 мин между
+магазинами (чтобы не завалить Uzum). Идемпотентно.
 
 ### Режимы запуска (первый аргумент)
 
@@ -461,7 +549,10 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
   `/health`; дашборд `/hangfire` только в Development.
 - `diag <shopId> <apiKey>` — консольная диагностика: три GET-эндпоинта + проверка
   обоих base-path, печатает статусы/rate-limit/тело. Инструмент для В2.
-- `smoke` — отчёт по мок-магазину + снапшоты (наследие В1).
+- `smoke` — миграции + синк мок-магазина в Postgres + отчёт ИЗ БД в консоль.
+- `syncsmoke` — прогон полного + дельта-синка на моке против живой БД с проверками
+  (идемпотентность дельты, baseline чистой/legacy БД, отчёт из БД = 6 SKU потерь).
+  Требует доступный Postgres. Инструмент верификации «синк → БД».
 
 ### Production (В7)
 
@@ -526,6 +617,16 @@ Query: `page`, `size`, `shopId` (deprecated) / `shopIds` (array), `dateFrom`,
   и Excel-«Потеряшки» строятся из свежих API-данных. Excel-лист потеряшек: колонки
   баланса + «Потеряно» + сумма по продаже (колонки закупа больше нет). Loc: ключи
   `report.*`/`xlsx.*` обновлены (RU+UZ 100%), сноска про компенсацию.
+- **[СИНК → POSTGRES → ОТЧЁТ ИЗ БД] (СДЕЛАНО, после потеряшек):** отчёт больше не
+  тянет всю историю на каждый клик. Хранилище `Invoices`/`Returns`/`Skus`/`ShopSyncStates`
+  на EF-миграциях (уход от `EnsureCreated`, авто-baseline прод-БД). `UzumSyncService`:
+  полный/дельта синк с guard'ом порядка, pending-логикой, rate-limit паузой (daily floor
+  5000), 403→Inactive. Очередь `uzum-sync` (3 воркера, последовательно). Отчёт и обе
+  Excel-выгрузки — ТОЛЬКО из БД (`ReportCoordinator` never→полный/stale→дельта/fresh→inline,
+  доставка `ReportDeliveryJob`+`BotNotifier`). Подвал «Данные на …». `NormalizeSkuKey`
+  вынесен в Core (`SkuKey`). Убраны `ShopSyncService`/`NightlySyncJob` (заменены). Приёмка
+  `StartupProvisioner`. Валидировано на живом Postgres (`syncsmoke`/`smoke`). finance/orders
+  из пути бесплатного отчёта убран полностью (остался в `diag`). RU+UZ 100%.
 - **В6 (НЕ НАЧАТ):** беты на живых селлерах, фиксы.
 - **В7 (СДЕЛАНО):** production-деплой. Multi-stage `Dockerfile`,
   `docker-compose.prod.yml` (app+postgres+redis+backup, секреты через `.env`,

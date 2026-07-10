@@ -56,8 +56,10 @@ public static class BotReportRenderer
             sb.AppendLine(string.Format(Loc.T("report.card.more", lang), hidden));
         }
 
-        // Сноска про уже полученную компенсацию (вычесть вручную).
+        // Подвал: «Данные на …» + сноска про уже полученную компенсацию.
         sb.AppendLine();
+        if (r.DataAsOf is { } asOf)
+            sb.AppendLine($"_{string.Format(Loc.T("report.dataAsOf", lang), LocalTime(asOf))}_");
         sb.AppendLine($"_{Loc.T("report.compensationNote", lang)}_");
 
         var text = sb.ToString();
@@ -86,6 +88,23 @@ public static class BotReportRenderer
 
         sb.AppendLine();
         return sb.ToString();
+    }
+
+    // Время в тайм-зоне Ташкента, формат дд.ММ ЧЧ:мм (как просит подвал «Данные на …»).
+    private static string LocalTime(DateTimeOffset utc)
+    {
+        var tz = ResolveTashkentTz();
+        return TimeZoneInfo.ConvertTime(utc, tz).ToString("dd.MM HH:mm");
+    }
+
+    private static TimeZoneInfo ResolveTashkentTz()
+    {
+        foreach (var id in new[] { "Asia/Tashkent", "Central Asia Standard Time" })
+        {
+            try { return TimeZoneInfo.FindSystemTimeZoneById(id); }
+            catch (TimeZoneNotFoundException) { }
+        }
+        return TimeZoneInfo.CreateCustomTimeZone("UZT", TimeSpan.FromHours(5), "Uzbekistan Time", "UZT");
     }
 
     // Разряды через неразрывный пробел (без зависимости от культуры).

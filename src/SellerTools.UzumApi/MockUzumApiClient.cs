@@ -160,8 +160,44 @@ public class MockUzumApiClient : IUzumApiClient
     // lost = accepted − removed − sold − defected − stock сошёлся с построенными
     // товарами. План строим ИЗ САМИХ товаров (не реплицируя rnd повторно) —
     // так accepted гарантированно = целевой lost + removed + sold + defected + stock.
+    //
+    // dateCreated проставляем УБЫВАЮЩИМ (новые сверху) — как отдаёт живой API; на этом
+    // порядке дельта-синк проверяет page0/page1-guard (восходящий порядок → ошибка).
     public Task<IReadOnlyList<InvoiceDto>> GetAllInvoicesAsync(
         long shopId, string apiKey, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<InvoiceDto>>(BuildAllInvoices());
+
+    public Task<IReadOnlyList<SellerReturnDto>> GetAllReturnsAsync(
+        long shopId, string apiKey, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<SellerReturnDto>>(BuildAllReturns());
+
+    public Task<ApiPage<InvoiceDto>> GetInvoicesPageAsync(
+        long shopId, string apiKey, int page, int size = 50, CancellationToken ct = default)
+        => Task.FromResult(Paginate(BuildAllInvoices(), page, size));
+
+    public Task<ApiPage<SellerReturnDto>> GetReturnsPageAsync(
+        long shopId, string apiKey, int page, int size = 50, CancellationToken ct = default)
+        => Task.FromResult(Paginate(BuildAllReturns(), page, size));
+
+    private static ApiPage<T> Paginate<T>(IReadOnlyList<T> all, int page, int size)
+    {
+        var slice = all.Skip(page * size).Take(size).ToList();
+        return new ApiPage<T>
+        {
+            Items = slice,
+            IsLast = slice.Count < size,
+            RateLimitHeaders = MockRateLimitHeaders(99500 - page),
+        };
+    }
+
+    // База времени для синтетических дат (новые сверху, шаг вниз по индексу).
+    private static readonly DateTimeOffset MockBaseDate =
+        new(2026, 7, 1, 12, 0, 0, TimeSpan.Zero);
+
+    private static JsonElement IsoDate(DateTimeOffset d) =>
+        JsonDocument.Parse($"\"{d:o}\"").RootElement.Clone();
+
+    private static List<InvoiceDto> BuildAllInvoices()
     {
         var acceptedSkus = new List<SkuForInvoiceDto>();
         foreach (var plan in BuildReconPlan())
@@ -170,15 +206,19 @@ public class MockUzumApiClient : IUzumApiClient
             {
                 SkuTitle = plan.Title,
                 QuantityAcceptedRaw = plan.Accepted,
+                QuantityToStockRaw = plan.Accepted,
             });
         }
 
-        // Одна накладная ACCEPTED со всеми SKU + одна CREATED (её accepted игнорируем).
-        var invoices = new List<InvoiceDto>
+        // Накладная ACCEPTED (новее) + CREATED-черновик (старее, её accepted игнорируем).
+        return new List<InvoiceDto>
         {
             new()
             {
                 Id = 500001,
+                InvoiceNumber = 500001,
+                DateCreatedRaw = IsoDate(MockBaseDate),
+                DateAcceptedRaw = IsoDate(MockBaseDate.AddHours(6)),
                 InvoiceStatus = new InvoiceStatusDto { Value = "ACCEPTED" },
                 Products = new List<ProductForInvoiceDto>
                 {
@@ -188,6 +228,8 @@ public class MockUzumApiClient : IUzumApiClient
             new()
             {
                 Id = 500002,
+                InvoiceNumber = 500002,
+                DateCreatedRaw = IsoDate(MockBaseDate.AddDays(-1)),
                 InvoiceStatus = new InvoiceStatusDto { Value = "CREATED" },
                 Products = new List<ProductForInvoiceDto>
                 {
@@ -196,22 +238,25 @@ public class MockUzumApiClient : IUzumApiClient
                         ProductTitle = "Черновик поставки",
                         Skus = new List<SkuForInvoiceDto>
                         {
-                            // НЕ должно попасть в accepted (статус накладной CREATED).
-                            new() { SkuTitle = Catalog[0].Sku, QuantityAcceptedRaw = 9999 },
+                            // Тот же SKU (полный код), но статус накладной CREATED —
+                            // НЕ должно попасть в accepted. Проверяет фильтр по статусу.
+                            new()
+                            {
+                                SkuTitle = $"{Catalog[0].Product} — {Catalog[0].Sku}",
+                                QuantityAcceptedRaw = 9999,
+                            },
                         },
                     },
                 },
             },
         };
-
-        return Task.FromResult<IReadOnlyList<InvoiceDto>>(invoices);
     }
 
-    public Task<IReadOnlyList<SellerReturnDto>> GetAllReturnsAsync(
-        long shopId, string apiKey, CancellationToken ct = default)
+    private static List<SellerReturnDto> BuildAllReturns()
     {
         var returns = new List<SellerReturnDto>();
         var id = 600001L;
+        var step = 0;
 
         foreach (var plan in BuildReconPlan())
         {
@@ -222,10 +267,17 @@ public class MockUzumApiClient : IUzumApiClient
             //  - useAmount: totalPackedAmount==0 && assembledDate==null → берём amount;
             //  - иначе: assembledDate задан → берём packedAmount.
             var useAmount = id % 2 == 1;
+            // Возвраты завершены (completedDate) → терминальны (для дельты). Даты убывают.
+            var created = MockBaseDate.AddDays(-step);
             returns.Add(new SellerReturnDto
             {
                 Id = id++,
+                Type = "RETURN",
+                Status = "COMPLETED",
+                DateCreatedRaw = IsoDate(created),
+                CompletedDateRaw = IsoDate(created.AddHours(12)),
                 TotalPackedAmount = useAmount ? 0 : plan.Removed,
+                TotalAmount = plan.Removed,
                 AssembledDate = useAmount ? null : MockAssembledDate,
                 ReturnItems = new List<SellerReturnItemDto>
                 {
@@ -237,9 +289,10 @@ public class MockUzumApiClient : IUzumApiClient
                     },
                 },
             });
+            step++;
         }
 
-        return Task.FromResult<IReadOnlyList<SellerReturnDto>>(returns);
+        return returns;
     }
 
     // План реконсиляции: строится ИЗ построенных товаров, чтобы accepted точно
@@ -256,7 +309,10 @@ public class MockUzumApiClient : IUzumApiClient
             var removed = i % 3 == 0 ? 2 : 0;
             var lost = lossIndexes.Contains(i) ? sku.QuantityMissing : 0;
             var accepted = lost + removed + sku.QuantitySold + sku.QuantityDefected + sku.QuantityActive;
-            yield return new ReconPlan(sku.SkuTitle ?? "", accepted, removed);
+            // ⚠️ Ключ матча — ПОЛНЫЙ код SKU. В накладных/возвратах он лежит в их skuTitle,
+            // а в карточке — в skuFullTitle. Кладём сюда SkuFullTitle, иначе join с картой
+            // (по SkuKey.Normalize(skuFullTitle)) не сматчится и accepted=0.
+            yield return new ReconPlan(sku.SkuFullTitle ?? "", accepted, removed);
         }
     }
 

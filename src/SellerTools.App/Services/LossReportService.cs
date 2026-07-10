@@ -3,104 +3,97 @@ using Microsoft.Extensions.Logging;
 using SellerTools.App.Data;
 using SellerTools.Core.Entities;
 using SellerTools.Core.Reports;
-using SellerTools.UzumApi;
-using SellerTools.UzumApi.Dto;
 
 namespace SellerTools.App.Services;
 
 /// <summary>
-/// Строит отчёт «Сколько Uzum вам должен» балансовой реконсиляцией на 1 SKU:
+/// Строит отчёт «Сколько Uzum вам должен» балансовой реконсиляцией на 1 SKU
+/// ТОЛЬКО ИЗ POSTGRES (данные кладёт синк — UzumSyncService). Ноль живых запросов
+/// к Uzum: обработчик кнопки читает БД.
 ///   lost = accepted − removed − sold − defected − stock
 /// где:
-///   accepted — принято складом (/v1/invoice, только накладные ACCEPTED),
-///   removed  — физвывоз со склада (/v1/return, legacy-правило),
-///   sold     — quantitySold карточки (уже НЕТТО, ничего не вычитать),
-///   defected — quantityDefected карточки,
-///   stock    — quantityActive карточки.
-/// Матч SKU между источниками — ТОЛЬКО по skuTitle (id в накладных/возвратах —
-/// внутренние, не skuId). Отрицательный lost клампится в 0 (рассинхрон снапшота).
+///   accepted — принято складом (InvoiceItems только по накладным IsTerminal=ACCEPTED),
+///   removed  — физвывоз (ReturnItems, legacy-правило зафиксировано в ReturnRecord.UseAmount),
+///   sold     — QuantitySold карточки (уже НЕТТО),
+///   defected — QuantityDefected карточки,
+///   stock    — QuantityActive карточки.
+/// Матч SKU между источниками — по НОРМАЛИЗОВАННОМУ ключу SkuKeyNorm (SkuKey.Normalize;
+/// пишется при синке из card.skuFullTitle и invoice/return.skuTitle).
 ///
-/// ⚠️ quantityMissing из карточки БОЛЬШЕ НЕ ИСПОЛЬЗУЕТСЯ: поле deprecated и всегда
-/// возвращает 0. quantityReturned — это КЛИЕНТСКИЕ возвраты, в формуле НЕ участвует.
-///
-/// Снапшоты (SkuDailySnapshot) продолжаем копить для истории количеств, но lost из
-/// снапшота не считаем — accepted/removed там нет. Поэтому отчёт строится по API.
+/// ⚠️ quantityMissing НЕ используется (deprecated, всегда 0). quantityReturned —
+/// КЛИЕНТСКИЕ возвраты, в формуле НЕ участвует.
 /// </summary>
 public class LossReportService
 {
-    private readonly IUzumApiClient _api;
     private readonly AppDbContext _db;
-    private readonly ICryptoService _crypto;
     private readonly ILogger<LossReportService> _log;
 
-    public LossReportService(
-        IUzumApiClient api, AppDbContext db, ICryptoService crypto, ILogger<LossReportService> log)
+    public LossReportService(AppDbContext db, ILogger<LossReportService> log)
     {
-        _api = api;
         _db = db;
-        _crypto = crypto;
         _log = log;
     }
 
-    /// <summary>
-    /// Отчёт по записи магазина: расшифровывает ключ и строит через API.
-    /// Бросает при ошибке (протухший ключ, 403 и т.п.) — вызывающий обрабатывает.
-    /// </summary>
+    /// <summary>Отчёт по записи магазина (данные берутся из БД, ключ не нужен).</summary>
     public Task<LossReport> BuildAsync(Shop shop, CancellationToken ct = default)
+        => BuildFromDbAsync(shop.Id, shop.Title, ct);
+
+    /// <summary>Отчёт по shopId — читает Postgres, ничего не тянет из Uzum.</summary>
+    public async Task<LossReport> BuildFromDbAsync(
+        long shopId, string? shopTitle = null, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(shop.ApiKeyEncrypted))
-            throw new InvalidOperationException("нет сохранённого ключа");
+        var skus = await _db.Skus
+            .Where(x => x.ShopId == shopId)
+            .AsNoTracking()
+            .ToListAsync(ct);
 
-        var apiKey = _crypto.Decrypt(shop.ApiKeyEncrypted);
-        return BuildAsync(shop.Id, apiKey, shop.Title, ct);
-    }
+        // accepted по ключу: сумма QuantityAccepted строк накладных, у которых
+        // родительская накладная IsTerminal (== ACCEPTED). Черновики исключены.
+        var acceptedByKey = await _db.InvoiceItems
+            .Where(i => i.Invoice!.ShopId == shopId && i.Invoice.IsTerminal && i.SkuKeyNorm != "")
+            .GroupBy(i => i.SkuKeyNorm)
+            .Select(g => new { Key = g.Key, Qty = g.Sum(x => x.QuantityAccepted) })
+            .ToDictionaryAsync(x => x.Key, x => x.Qty, ct);
 
-    /// <summary>
-    /// Тянет товары + накладные + возвраты, сохраняет снапшот количеств за сегодня
-    /// и строит отчёт балансовой реконсиляцией.
-    /// </summary>
-    public async Task<LossReport> BuildAsync(
-        long shopId, string apiKey, string? shopTitle = null, CancellationToken ct = default)
-    {
-        var products = await _api.GetAllProductsAsync(shopId, apiKey, ct);
-        var invoices = await _api.GetAllInvoicesAsync(shopId, apiKey, ct);
-        var returns = await _api.GetAllReturnsAsync(shopId, apiKey, ct);
+        // removed по ключу: по legacy-правилу родителя (UseAmount) берём Amount либо
+        // PackedAmount. Считаем в памяти после выборки строк с флагом родителя.
+        var returnRows = await _db.ReturnItems
+            .Where(r => r.Return!.ShopId == shopId && r.SkuKeyNorm != "")
+            .Select(r => new { r.SkuKeyNorm, r.Amount, r.PackedAmount, r.Return!.UseAmount })
+            .ToListAsync(ct);
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var skus = products.SelectMany(p => p.SkuList).ToList();
+        var removedByKey = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var r in returnRows)
+        {
+            var qty = r.UseAmount ? r.Amount : r.PackedAmount;
+            removedByKey[r.SkuKeyNorm] = removedByKey.GetValueOrDefault(r.SkuKeyNorm, 0) + qty;
+        }
 
-        await PersistSnapshotsAsync(shopId, today, skus, ct);
-
-        // Ключ матча — НОРМАЛИЗОВАННЫЙ полный код SKU. ⚠️ В карточке полный код лежит
-        // в skuFullTitle (skuTitle там короткий, напр. «11193»/«СЕРЫЙ»), а в накладных
-        // и возвратах полный код — в ИХ skuTitle. Нормализуем обе стороны (trim, UPPER,
-        // схлопывание пробелов), иначе join не сматчится и accepted/removed = 0.
-        var acceptedByKey = AggregateAccepted(invoices);
-        var removedByKey = AggregateRemoved(returns);
+        var dataAsOf = await GetDataAsOfAsync(shopId, ct);
 
         var report = new LossReport
         {
             ShopId = shopId,
             ShopTitle = shopTitle,
-            Date = today,
+            Date = DateOnly.FromDateTime(DateTime.UtcNow),
+            DataAsOf = dataAsOf,
             TotalSkusScanned = skus.Count,
         };
 
         foreach (var s in skus)
         {
-            var key = NormalizeSkuKey(s.SkuFullTitle);
-            var accepted = acceptedByKey.GetValueOrDefault(key, 0);
-            var removed = removedByKey.GetValueOrDefault(key, 0);
+            var key = s.SkuKeyNorm;
+            var accepted = string.IsNullOrEmpty(key) ? 0 : acceptedByKey.GetValueOrDefault(key, 0);
+            var removed = string.IsNullOrEmpty(key) ? 0 : removedByKey.GetValueOrDefault(key, 0);
 
-            // Защита от «немого нуля»: если по SKU было движение (sold/defected > 0),
-            // но accepted == 0 — почти наверняка ключ не сматчился (рассинхрон join'а).
-            // Логируем, чтобы баг больше не выглядел как честный «нет потерь».
+            // Защита от «немого нуля»: было движение (sold/defected>0), но accepted==0 —
+            // почти наверняка ключ не сматчился (рассинхрон join'а). Логируем оба ключа.
             if (accepted == 0 && (s.QuantitySold > 0 || s.QuantityDefected > 0))
                 _log.LogWarning(
-                    "Подозрение на несматченный SKU: skuId={SkuId} skuTitle='{Title}' " +
-                    "skuFullTitle='{Full}' → ключ карточки='{Key}', но accepted=0 при " +
-                    "sold={Sold}/defected={Def}. Проверить соответствие ключей invoice/return.",
-                    s.SkuId, s.SkuTitle, s.SkuFullTitle, key, s.QuantitySold, s.QuantityDefected);
+                    "Подозрение на несматченный SKU: skuId={SkuId} skuFullTitle='{Full}' → " +
+                    "ключ='{Key}', но accepted=0 при sold={Sold}/defected={Def}. " +
+                    "Проверить соответствие ключей invoice/return.",
+                    s.SkuId, s.SkuFullTitle, key, s.QuantitySold, s.QuantityDefected);
 
             var row = BuildRow(s, accepted, removed);
             if (row.Lost > 0)
@@ -112,30 +105,34 @@ public class LossReportService
             .ToList();
 
         _log.LogInformation(
-            "Отчёт по магазину {ShopId}: {Rows} SKU с потерями из {Total} (накладных {Inv}, возвратов {Ret})",
-            shopId, report.Rows.Count, skus.Count, invoices.Count, returns.Count);
+            "Отчёт по магазину {ShopId} (из БД): {Rows} SKU с потерями из {Total}, данные на {AsOf:o}",
+            shopId, report.Rows.Count, skus.Count, dataAsOf);
 
         return report;
     }
 
+    /// <summary>Карточки SKU магазина из БД (для Excel «Товары + ИКПУ»).</summary>
+    public async Task<IReadOnlyList<SkuRecord>> GetSkusAsync(long shopId, CancellationToken ct = default)
+        => await _db.Skus.Where(x => x.ShopId == shopId).AsNoTracking().ToListAsync(ct);
+
     /// <summary>
-    /// Единый ключ матча SKU между карточкой (skuFullTitle) и накладными/возвратами
-    /// (их skuTitle). Устойчив к «грязным» строкам Uzum: trim, верхний регистр,
-    /// схлопывание повторных пробелов. Null/пусто → пустая строка (не сматчится).
+    /// Момент актуальности данных: самый свежий UpdatedAt среди карточек магазина
+    /// (карточки освежаются при каждом синке, дают самую позднюю точку). null — нет данных.
     /// </summary>
-    private static string NormalizeSkuKey(string? raw)
+    private async Task<DateTimeOffset?> GetDataAsOfAsync(long shopId, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(raw))
-            return "";
-        var collapsed = System.Text.RegularExpressions.Regex.Replace(raw.Trim(), @"\s+", " ");
-        return collapsed.ToUpperInvariant();
+        var times = await _db.Skus
+            .Where(x => x.ShopId == shopId)
+            .Select(x => x.UpdatedAt)
+            .ToListAsync(ct);
+        return times.Count == 0 ? null : times.Max();
     }
 
     /// <summary>
     /// Балансовая строка по одному SKU. Отрицательный lost → 0 + warning
-    /// (это рассинхрон снапшота, а не потеря; селлеру отрицательное не показываем).
+    /// (рассинхрон, а не потеря; селлеру отрицательное не показываем).
     /// </summary>
-    private LossReportRow BuildRow(SkuDto s, int accepted, int removed)
+    private LossReportRow BuildRow(SkuRecord s, int accepted, int removed)
     {
         var sold = s.QuantitySold;       // уже НЕТТО
         var defected = s.QuantityDefected;
@@ -170,102 +167,5 @@ public class LossReportService
             // НЕ подставляем (грязный). Появится ввод в Фазе 1 — прокинем сюда.
             Cogs = 0,
         };
-    }
-
-    /// <summary>
-    /// accepted по НОРМАЛИЗОВАННОМУ ключу (skuTitle накладной = полный код SKU):
-    /// сумма quantityAccepted по строкам SKU накладных со статусом ACCEPTED.
-    /// Черновики (CREATED) игнорируем. Ключ = NormalizeSkuKey(sku.SkuTitle).
-    /// </summary>
-    private static Dictionary<string, int> AggregateAccepted(IReadOnlyList<InvoiceDto> invoices)
-    {
-        var acc = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var inv in invoices)
-        {
-            if (!string.Equals(inv.InvoiceStatus?.Value, "ACCEPTED", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            foreach (var product in inv.Products)
-            foreach (var sku in product.Skus)
-            {
-                var key = NormalizeSkuKey(sku.SkuTitle);
-                if (key.Length == 0)
-                    continue;
-                acc[key] = acc.GetValueOrDefault(key, 0) + sku.QuantityAccepted;
-            }
-        }
-        return acc;
-    }
-
-    /// <summary>
-    /// removed по НОРМАЛИЗОВАННОМУ ключу (skuTitle возврата = полный код SKU): физвывоз
-    /// со склада. Legacy-правило на РОДИТЕЛЬСКОМ возврате: если totalPackedAmount==0 И
-    /// assembledDate отсутствует → берём amount строки; иначе packedAmount.
-    /// Ключ = NormalizeSkuKey(item.SkuTitle).
-    /// </summary>
-    private static Dictionary<string, int> AggregateRemoved(IReadOnlyList<SellerReturnDto> returns)
-    {
-        var rem = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var ret in returns)
-        {
-            var useAmount = ret.UseAmount;
-            foreach (var item in ret.ReturnItems)
-            {
-                var key = NormalizeSkuKey(item.SkuTitle);
-                if (key.Length == 0)
-                    continue;
-                var qty = useAmount ? item.Amount : item.PackedAmount;
-                rem[key] = rem.GetValueOrDefault(key, 0) + qty;
-            }
-        }
-        return rem;
-    }
-
-    /// <summary>Дата последнего снапшота магазина (или null, если снапшотов ещё нет).</summary>
-    public async Task<DateOnly?> GetLatestSnapshotDateAsync(long shopId, CancellationToken ct = default)
-    {
-        var dates = await _db.SkuDailySnapshots
-            .Where(x => x.ShopId == shopId)
-            .Select(x => x.Date)
-            .ToListAsync(ct);
-        return dates.Count == 0 ? null : dates.Max();
-    }
-
-    /// <summary>
-    /// Upsert снапшотов количеств за дату по уникальному индексу (ShopId, Date, SkuId).
-    /// </summary>
-    private async Task PersistSnapshotsAsync(
-        long shopId, DateOnly date, IReadOnlyList<SkuDto> skus, CancellationToken ct)
-    {
-        var skuIds = skus.Select(s => s.SkuId).ToList();
-
-        var existing = await _db.SkuDailySnapshots
-            .Where(x => x.ShopId == shopId && x.Date == date && skuIds.Contains(x.SkuId))
-            .ToDictionaryAsync(x => x.SkuId, ct);
-
-        foreach (var s in skus)
-        {
-            if (!existing.TryGetValue(s.SkuId, out var snap))
-            {
-                snap = new SkuDailySnapshot { ShopId = shopId, Date = date, SkuId = s.SkuId };
-                _db.SkuDailySnapshots.Add(snap);
-            }
-
-            snap.SkuTitle = s.SkuTitle;
-            snap.ProductTitle = s.ProductTitle;
-            snap.QuantityActive = s.QuantityActive;
-            snap.QuantitySold = s.QuantitySold;
-            snap.QuantityReturned = s.QuantityReturned;
-            snap.QuantityMissing = s.QuantityMissing;   // deprecated, всегда 0 — копим для истории
-            snap.QuantityDefected = s.QuantityDefected;
-            snap.Price = s.Price;
-            snap.PurchasePrice = s.PurchasePrice;
-            snap.Ikpu = s.Ikpu;
-            snap.SellerItemCode = s.SellerItemCode;
-            snap.CapturedAt = DateTimeOffset.UtcNow;
-        }
-
-        var saved = await _db.SaveChangesAsync(ct);
-        _log.LogInformation("Снапшоты за {Date}: сохранено строк {Saved}", date, saved);
     }
 }

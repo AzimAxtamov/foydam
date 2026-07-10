@@ -107,9 +107,18 @@ public static class Loc
             // --- Бот: отчёт ---
             ["bot.report.building"] = "Собираю свежие данные из Uzum, это займёт несколько секунд…",
             ["bot.report.fromSnapshot"] = "Отчёт по данным на {0}:",
+            ["bot.report.firstSync"] =
+                "Собираю ваши данные из Uzum первый раз — это займёт пару минут. " +
+                "Отчёт пришлю сюда, как только будет готов.",
+            ["bot.report.refreshing"] =
+                "Обновляю данные из Uzum… Отчёт пришлю сюда через несколько секунд.",
+            ["bot.report.shopInactive"] =
+                "🔒 Похоже, магазин сейчас недоступен по ключу (возможно, ключ отозван или магазин " +
+                "выключен). Проверьте ключ в личном кабинете Uzum и привяжите заново — /start.",
             ["bot.report.syncFailed"] =
                 "😕 Не получилось получить данные из Uzum: {0}. Попробуйте позже.",
             ["bot.report.noShopYet"] = "У вас пока нет привязанного магазина. Нажмите /start.",
+            ["report.dataAsOf"] = "Данные на {0}",
 
             // --- Бот: Excel-выгрузки ---
             ["bot.excel.building"] = "Готовлю файл Excel…",
@@ -124,6 +133,9 @@ public static class Loc
 
             // --- Бот: обновление данных (троттлинг) ---
             ["bot.refresh.running"] = "Обновляю данные магазина из Uzum…",
+            ["bot.refresh.queued"] =
+                "🔄 Запустил обновление данных из Uzum в фоне. Можно строить отчёт — " +
+                "он подхватит свежие данные, как только синк завершится.",
             ["bot.refresh.done"] = "✅ Данные обновлены: {0} SKU на {1}.",
             ["bot.refresh.throttled"] =
                 "⏳ Данные от {0}. Обновить можно в {1} — чаще нельзя, чтобы не упереться в лимиты Uzum.",
@@ -257,9 +269,18 @@ public static class Loc
             // --- Bot: hisobot ---
             ["bot.report.building"] = "Uzumdan yangi ma'lumot yig'yapman, bir necha soniya…",
             ["bot.report.fromSnapshot"] = "{0} holatidagi ma'lumot bo'yicha hisobot:",
+            ["bot.report.firstSync"] =
+                "Ma'lumotlaringizni Uzumdan birinchi marta yig'yapman — bu bir-ikki daqiqa oladi. " +
+                "Hisobot tayyor bo'lishi bilan shu yerga yuboraman.",
+            ["bot.report.refreshing"] =
+                "Uzumdan ma'lumotni yangilayapman… Hisobotni bir necha soniyada shu yerga yuboraman.",
+            ["bot.report.shopInactive"] =
+                "🔒 Ko'rinishidan do'kon hozir kalit orqali mavjud emas (kalit bekor qilingan yoki " +
+                "do'kon o'chirilgan bo'lishi mumkin). Uzum kabinetida kalitni tekshiring va qaytadan ulang — /start.",
             ["bot.report.syncFailed"] =
                 "😕 Uzumdan ma'lumot olib bo'lmadi: {0}. Keyinroq urinib ko'ring.",
             ["bot.report.noShopYet"] = "Sizda hali ulangan do'kon yo'q. /start ni bosing.",
+            ["report.dataAsOf"] = "Ma'lumot {0} holatiga",
 
             // --- Bot: Excel yuklamalar ---
             ["bot.excel.building"] = "Excel faylini tayyorlayapman…",
@@ -274,6 +295,9 @@ public static class Loc
 
             // --- Bot: ma'lumotni yangilash (cheklov) ---
             ["bot.refresh.running"] = "Do'kon ma'lumotini Uzumdan yangilayapman…",
+            ["bot.refresh.queued"] =
+                "🔄 Ma'lumotni Uzumdan yangilashni fonda ishga tushirdim. Hisobot tuzsangiz bo'ladi — " +
+                "sinxronlash tugashi bilan yangi ma'lumotni oladi.",
             ["bot.refresh.done"] = "✅ Ma'lumot yangilandi: {0} ta SKU, {1} holatiga.",
             ["bot.refresh.throttled"] =
                 "⏳ Ma'lumot {0} holatiga. Yangilash {1} da mumkin — Uzum limitiga urilmaslik uchun tez-tez mumkin emas.",

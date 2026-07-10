@@ -60,6 +60,12 @@ public class LossReport
     public string? ShopTitle { get; set; }
     public DateOnly Date { get; set; }
 
+    /// <summary>
+    /// Момент, на который актуальны данные отчёта (последнее обновление данных в БД).
+    /// Показывается в подвале «Данные на …». null — если неизвестно.
+    /// </summary>
+    public DateTimeOffset? DataAsOf { get; set; }
+
     public List<LossReportRow> Rows { get; set; } = new();
 
     /// <summary>Сколько SKU всего просмотрено (для контекста).</summary>

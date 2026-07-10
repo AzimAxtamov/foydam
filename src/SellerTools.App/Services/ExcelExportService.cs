@@ -1,7 +1,7 @@
 using ClosedXML.Excel;
 using SellerTools.App.Localization;
+using SellerTools.Core.Entities;
 using SellerTools.Core.Reports;
-using SellerTools.UzumApi.Dto;
 
 namespace SellerTools.App.Services;
 
@@ -113,7 +113,7 @@ public class ExcelExportService
     /// SKU / Товар / Артикул / Штрихкод / ИКПУ / Цена. Для ЭТТН.
     /// </summary>
     public ExcelFile BuildIkpuList(
-        long shopId, string? shopTitle, DateOnly date, IReadOnlyList<SkuDto> allSkus, string lang)
+        long shopId, string? shopTitle, DateOnly date, IReadOnlyList<SkuRecord> allSkus, string lang)
     {
         using var wb = new XLWorkbook();
         var ws = wb.Worksheets.Add(Loc.T("xlsx.ikpu.sheet", lang));
