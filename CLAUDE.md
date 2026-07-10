@@ -462,11 +462,16 @@ warning + null (при null в `dateCreated` дельта фолбэчит на 
 - Проекты:
   - `SellerTools.Core` — сущности домена + модель отчёта, без зависимостей.
   - `SellerTools.UzumApi` — DTO (в т.ч. `ReconciliationDtos.cs`: invoice/return для
-    баланса потерь), `IUzumApiClient` (+`GetAllInvoicesAsync`/`GetAllReturnsAsync`),
-    реальный клиент (HttpClient, rate-limit заголовки, ретраи 429/5xx **и на socket
-    reset**, гейт параллелизма ≤`MaxConcurrency`=3, `ProbeAsync` для diag),
-    `MockUzumApiClient` (детерминированный, seed; ~25 SKU, у 6 — баланс с потерей;
-    накладные+возвраты синтезируются из товаров, баланс сходится).
+    баланса потерь), `IUzumApiClient` (постраничные `GetInvoicesPageAsync`/
+    `GetReturnsPageAsync` — синк управляет пагинацией сам), реальный клиент (typed
+    HttpClient с явным `Timeout`/`ConnectTimeout` из конфига, rate-limit заголовки,
+    ретраи 429/5xx **и на socket reset**, гейт параллелизма ≤`MaxConcurrency`=3,
+    `ProbeAsync` для diag), `MockUzumApiClient` (детерминированный, seed; ~25 SKU,
+    у 6 — баланс с потерей; накладные+возвраты синтезируются из товаров, баланс сходится).
+    Магические значения (`ACCEPTED`/`CREATED`/`RETURN`, page size=50) — в `UzumConstants`.
+    ⚠️ Ретраи — рукописный цикл (НЕ Polly): осознанно, покрывает socket-reset + гейт
+    параллелизма + чтение rate-limit заголовков в одном месте (Polly этого из коробки
+    не даёт). Единый нормализатор ключа SKU — `SkuKey.Normalize` (в Core, одна функция).
   - `SellerTools.App` — хост (WebApplication для дашборда), DI, EF, бот, джобы,
     Excel, шифрование, алерты, диагностика. Ключевое для синка: `UzumSyncService`
     (полный/дельта синк), `SyncStorage` (идемпотентный upsert по API id), `UzumSyncJob`
@@ -491,7 +496,9 @@ warning + null (при null в `dateCreated` дельта фолбэчит на 
   `dotnet-ef` (локальный тул, манифест `dotnet-tools.json`).
 - Режим API: `UzumApi:Mode = Mock | Real` в appsettings. Настройки синка — секция `Sync`
   (`SyncOptions`): `RateLimitDailyFloor`(5000), `CardsFreshnessHours`/`DeltaFreshnessHours`(6),
-  `DeltaOverscanPages`(1), `MaxPagesPerSync`(1000).
+  `DeltaOverscanPages`(1), `MaxPagesPerSync`(1000), `RefreshThrottleMinutes`(30),
+  `ProvisionSpacingMinutes`(2), `NightlyJitterSeconds`(30). HTTP-таймауты — в `UzumApi`
+  (`RequestTimeoutSeconds`=100, `ConnectTimeoutSeconds`=15). Пороги/интервалы НЕ хардкодятся.
 - Деньги: `long`. Мок — детерминированный (фиксированный seed).
 
 ### Синхронизация и хранилище (модель «синк → Postgres → отчёт из БД»)
