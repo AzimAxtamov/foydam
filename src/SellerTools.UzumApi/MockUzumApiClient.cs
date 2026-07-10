@@ -219,7 +219,7 @@ public class MockUzumApiClient : IUzumApiClient
                 InvoiceNumber = 500001,
                 DateCreatedRaw = IsoDate(MockBaseDate),
                 DateAcceptedRaw = IsoDate(MockBaseDate.AddHours(6)),
-                InvoiceStatus = new InvoiceStatusDto { Value = "ACCEPTED" },
+                InvoiceStatus = new InvoiceStatusDto { Value = UzumConstants.InvoiceStatus.Accepted },
                 ProductsRaw = new List<ProductForInvoiceDto>
                 {
                     new() { ProductTitle = "Демо-поставка", SkusRaw = acceptedSkus },
@@ -230,7 +230,7 @@ public class MockUzumApiClient : IUzumApiClient
                 Id = 500002,
                 InvoiceNumber = 500002,
                 DateCreatedRaw = IsoDate(MockBaseDate.AddDays(-1)),
-                InvoiceStatus = new InvoiceStatusDto { Value = "CREATED" },
+                InvoiceStatus = new InvoiceStatusDto { Value = UzumConstants.InvoiceStatus.Created },
                 ProductsRaw = new List<ProductForInvoiceDto>
                 {
                     new()
@@ -272,7 +272,7 @@ public class MockUzumApiClient : IUzumApiClient
             returns.Add(new SellerReturnDto
             {
                 Id = id++,
-                Type = "RETURN",
+                Type = UzumConstants.ReturnType.Return,
                 Status = "COMPLETED",
                 DateCreatedRaw = IsoDate(created),
                 CompletedDateRaw = IsoDate(created.AddHours(12)),

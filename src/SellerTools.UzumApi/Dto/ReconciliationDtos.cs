@@ -152,7 +152,7 @@ public class InvoiceDto
 
     /// <summary>ACCEPTED — накладная принята складом (участвует в accepted).</summary>
     [JsonIgnore]
-    public bool IsAccepted => StatusValue == "ACCEPTED";
+    public bool IsAccepted => StatusValue == UzumConstants.InvoiceStatus.Accepted;
 
     /// <summary>
     /// Терминален ли статус накладной для дельта-синка. ACCEPTED — конечное состояние

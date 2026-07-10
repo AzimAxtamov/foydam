@@ -44,7 +44,8 @@ public class UzumSyncService
     private readonly SyncOptions _sync;
     private readonly ILogger<UzumSyncService> _log;
 
-    private const int PageSize = 50; // максимум по спеке для /v1/invoice и /v1/return
+    // Размер страницы /v1/invoice и /v1/return — хард-лимит спеки (см. UzumConstants).
+    private const int PageSize = UzumConstants.InvoiceReturnPageSize;
 
     public UzumSyncService(
         IUzumApiClient api,

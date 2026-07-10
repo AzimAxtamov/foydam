@@ -140,7 +140,7 @@ public class RealUzumApiClient : IUzumApiClient
     private async Task<IReadOnlyList<T>> GetAllPagesAsync<T>(
         string path, string apiKey, CancellationToken ct)
     {
-        const int size = 50;
+        const int size = UzumConstants.InvoiceReturnPageSize;
         var all = new List<T>();
         var page = 0;
 
