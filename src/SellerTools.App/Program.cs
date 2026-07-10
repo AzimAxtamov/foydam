@@ -136,7 +136,10 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var jobs = scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>();
-    await StartupProvisioner.ProvisionAsync(db, jobs, app.Logger);
+    var syncOpts = scope.ServiceProvider
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<SellerTools.App.Configuration.SyncOptions>>().Value;
+    var spacing = TimeSpan.FromMinutes(Math.Max(0, syncOpts.ProvisionSpacingMinutes));
+    await StartupProvisioner.ProvisionAsync(db, jobs, app.Logger, spacing);
 }
 
 try

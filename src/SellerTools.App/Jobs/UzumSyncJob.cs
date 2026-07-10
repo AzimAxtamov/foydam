@@ -1,6 +1,8 @@
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using SellerTools.App.Configuration;
 using SellerTools.App.Data;
 using SellerTools.App.Services;
 using SellerTools.Core.Entities;
@@ -19,12 +21,15 @@ public class UzumSyncJob
 
     private readonly AppDbContext _db;
     private readonly UzumSyncService _sync;
+    private readonly SyncOptions _options;
     private readonly ILogger<UzumSyncJob> _log;
 
-    public UzumSyncJob(AppDbContext db, UzumSyncService sync, ILogger<UzumSyncJob> log)
+    public UzumSyncJob(
+        AppDbContext db, UzumSyncService sync, IOptions<SyncOptions> options, ILogger<UzumSyncJob> log)
     {
         _db = db;
         _sync = sync;
+        _options = options.Value;
         _log = log;
     }
 
@@ -53,14 +58,15 @@ public class UzumSyncJob
         var shops = await _db.Shops.AsNoTracking().ToListAsync(ct);
         _log.LogInformation("Ночной синк: магазинов {Count}", shops.Count);
 
+        var jitterMax = Math.Max(0, _options.NightlyJitterSeconds);
         var first = true;
         foreach (var shop in shops)
         {
             ct.ThrowIfCancellationRequested();
 
-            // Случайный сдвиг перед каждым магазином (кроме первого): 0..30 с.
-            if (!first)
-                await Task.Delay(TimeSpan.FromSeconds(Random.Shared.Next(0, 30)), ct);
+            // Случайный сдвиг перед каждым магазином (кроме первого): 0..NightlyJitterSeconds.
+            if (!first && jitterMax > 0)
+                await Task.Delay(TimeSpan.FromSeconds(Random.Shared.Next(0, jitterMax)), ct);
             first = false;
 
             var result = await _sync.SyncShopAsync(shop, ct);

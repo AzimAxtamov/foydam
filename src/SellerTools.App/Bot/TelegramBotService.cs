@@ -25,20 +25,21 @@ namespace SellerTools.App.Bot;
 /// </summary>
 public class TelegramBotService : IHostedService, IUpdateHandler
 {
-    // Минимальный интервал между ручными обновлениями (защита от спама лимитов).
-    private static readonly TimeSpan RefreshThrottle = TimeSpan.FromMinutes(30);
-
     private readonly BotOptions _options;
     private readonly IServiceScopeFactory _scopes;
     private readonly ConversationStore _store;
     private readonly IAdminAlertService _alerts;
     private readonly ILogger<TelegramBotService> _log;
 
+    // Минимальный интервал между ручными обновлениями (защита от спама лимитов). Из конфига.
+    private readonly TimeSpan _refreshThrottle;
+
     private ITelegramBotClient? _bot;
     private CancellationTokenSource? _cts;
 
     public TelegramBotService(
         IOptions<BotOptions> options,
+        IOptions<SyncOptions> sync,
         IServiceScopeFactory scopes,
         ConversationStore store,
         IAdminAlertService alerts,
@@ -49,6 +50,7 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         _store = store;
         _alerts = alerts;
         _log = log;
+        _refreshThrottle = TimeSpan.FromMinutes(Math.Max(0, sync.Value.RefreshThrottleMinutes));
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -517,9 +519,9 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         var state = await db.ShopSyncStates.AsNoTracking()
             .FirstOrDefaultAsync(x => x.ShopId == shop.Id, ct);
         var last = state?.LastDeltaSyncAt ?? state?.LastFullSyncAt;
-        if (last is { } l && DateTimeOffset.UtcNow - l < RefreshThrottle)
+        if (last is { } l && DateTimeOffset.UtcNow - l < _refreshThrottle)
         {
-            var nextAt = l + RefreshThrottle;
+            var nextAt = l + _refreshThrottle;
             await bot.SendMessage(chatId, string.Format(
                 Loc.T("bot.refresh.throttled", lang), LocalTime(l), LocalTime(nextAt)),
                 replyMarkup: MainMenu(lang), cancellationToken: ct);

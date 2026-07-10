@@ -15,11 +15,9 @@ namespace SellerTools.App.Services;
 /// </summary>
 public static class StartupProvisioner
 {
-    // Шаг между первичными синками разных магазинов (страховка от пиковой нагрузки).
-    private static readonly TimeSpan Spacing = TimeSpan.FromMinutes(2);
-
     public static async Task ProvisionAsync(
-        AppDbContext db, IBackgroundJobClient jobs, ILogger logger, CancellationToken ct = default)
+        AppDbContext db, IBackgroundJobClient jobs, ILogger logger,
+        TimeSpan spacing, CancellationToken ct = default)
     {
         var shopIds = await db.Shops.Select(s => s.Id).ToListAsync(ct);
         var haveState = await db.ShopSyncStates.Select(x => x.ShopId).ToListAsync(ct);
@@ -33,7 +31,7 @@ public static class StartupProvisioner
 
         logger.LogWarning(
             "Приёмка: {Count} магазин(ов) без состояния синка — помечаю Never и ставлю " +
-            "первичные синки с интервалом {Spacing}.", needState.Count, Spacing);
+            "первичные синки с интервалом {Spacing}.", needState.Count, spacing);
 
         foreach (var id in needState)
         {
@@ -41,13 +39,13 @@ public static class StartupProvisioner
         }
         await db.SaveChangesAsync(ct);
 
-        // Первичные синки — с нарастающей задержкой (0, 2, 4, … минут).
+        // Первичные синки — с нарастающей задержкой (0, spacing, 2·spacing, …).
         var delay = TimeSpan.Zero;
         foreach (var id in needState)
         {
             var shopId = id;
             jobs.Schedule<UzumSyncJob>(j => j.SyncShopAsync(shopId, CancellationToken.None), delay);
-            delay += Spacing;
+            delay += spacing;
         }
     }
 }
