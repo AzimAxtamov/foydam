@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using SellerTools.App.Data;
 using SellerTools.App.Localization;
 using SellerTools.App.Services;
+using Telegram.Bot.Types.ReplyMarkups;
 
 namespace SellerTools.App.Jobs;
 
@@ -50,7 +51,10 @@ public class ReportDeliveryJob
 
         var report = await _report.BuildAsync(shop, ct);
         var text = BotReportRenderer.Render(report, lang);
-        await _notifier.SendTextAsync(chatId, text, markdown: true, ct: ct);
+        // Инлайн-кнопка «Поделиться» и на фоновой доставке отчёта (тот же callback share:report).
+        var share = new InlineKeyboardMarkup(
+            InlineKeyboardButton.WithCallbackData(Loc.T("share.button", lang), "share:report"));
+        await _notifier.SendTextAsync(chatId, text, share, markdown: true, ct: ct);
     }
 
     /// <summary>Excel-выгрузка из БД → пользователю. loss=true — потеряшки, иначе товары+ИКПУ.</summary>

@@ -9,6 +9,7 @@ public class AppDbContext : DbContext
 
     public DbSet<Seller> Sellers => Set<Seller>();
     public DbSet<Shop> Shops => Set<Shop>();
+    public DbSet<ShareEvent> ShareEvents => Set<ShareEvent>();
     public DbSet<SkuDailySnapshot> SkuDailySnapshots => Set<SkuDailySnapshot>();
     public DbSet<SyncCursor> SyncCursors => Set<SyncCursor>();
 
@@ -27,6 +28,25 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedNever(); // telegram user id
             e.Property(x => x.Language).HasMaxLength(2);
+
+            // Реф-код: уникальный, nullable (генерируется лениво). Фильтрованный уникальный
+            // индекс — чтобы множество NULL (код ещё не создан) не конфликтовало.
+            e.Property(x => x.RefCode).HasMaxLength(8);
+            e.HasIndex(x => x.RefCode).IsUnique().HasFilter("\"RefCode\" IS NOT NULL");
+
+            // Кто привёл (self-FK). Без навигации/каскада: при удалении реферера
+            // referred_by просто повисает (Restrict), удалять селлеров мы всё равно не удаляем.
+            e.HasOne<Seller>()
+                .WithMany()
+                .HasForeignKey(x => x.ReferredBySellerId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        mb.Entity<ShareEvent>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.SellerId);
+            e.HasIndex(x => x.CreatedAt);
         });
 
         mb.Entity<Shop>(e =>

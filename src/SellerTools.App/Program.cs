@@ -194,6 +194,7 @@ static void RegisterSharedServices(IServiceCollection services, IConfiguration c
     services.AddSingleton<ICryptoService, AesCryptoService>();
     services.AddSingleton<ConversationStore>();
     services.AddScoped<SellerService>();
+    services.AddScoped<ReferralService>();
     services.AddScoped<KeyVerification>();
     services.Configure<SyncOptions>(config.GetSection(SyncOptions.SectionName));
 

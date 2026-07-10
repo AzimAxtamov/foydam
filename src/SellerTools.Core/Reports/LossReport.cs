@@ -73,6 +73,15 @@ public class LossReport
 
     public int TotalLost => Rows.Sum(r => r.Lost);
 
+    /// <summary>Суммарный брак по строкам отчёта (для share-карточки). Строки — только с lost&gt;0.</summary>
+    public int TotalDefected => Rows.Sum(r => r.Defected);
+
+    /// <summary>
+    /// Оценка для share-карточки (§7 спеки шеринга): Σ(потеряшки + брак) × цена продажи.
+    /// Считается по строкам отчёта (те же данные, что видел селлер).
+    /// </summary>
+    public long ShareSumMax => Rows.Sum(r => (long)(r.Lost + r.Defected) * r.Price);
+
     /// <summary>Итог к взысканию по цене продажи.</summary>
     public long TotalEstimateBySalePrice => Rows.Sum(r => r.EstimateBySalePrice);
 

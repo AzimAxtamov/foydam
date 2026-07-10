@@ -172,6 +172,54 @@ public static class Loc
 
             // --- Бот: прочее ---
             ["bot.unknown"] = "Не понял команду. Начать — /start.",
+
+            // ============ Шеринг (виральность V1) ============
+            // ⚠️ Тексты карточки читаются как ЛИЧНЫЙ пост селлера, НЕ реклама:
+            // от первого лица, с конкретными числами, без императивов/«бесплатно»/«бот»/
+            // ссылок в теле/@-упоминаний/маркетинговых эмодзи. Единственный CTA — кнопка.
+            ["share.button"] = "🤝 Поделиться результатом",
+            ["share.calc.button"] = "Как это посчитано",
+
+            // Заголовок форварда (кликабелен, ведёт на бота через кнопку карточки).
+            ["share.card.title"] = "Переслано от Foydam",
+
+            // Карточка «потери найдены». {0}=defectFragment (может быть пусто), {1}=sumMax.
+            ["share.card.loss"] =
+                "Прогнал сверку по своему магазину Uzum: накладные → продажи → возвраты → брак → остаток.\n" +
+                "Не сошлось: {0} шт. склад принял — и они просто исчезли.{1}\n" +
+                "В кабинете этой цифры нет нигде. По ценам продажи — до {2} сум.\n" +
+                "За недопоставку при сдаче нас штрафуют (код 00001 в расходах), а за пропажу после приёмки — тишина.",
+            // Вставка про брак (используется в {1} выше, если defectQty>0). {0}=defectQty.
+            ["share.card.lossDefect"] = " Плюс {0} шт. брака.",
+
+            // Карточка «всё сошлось» (чистый кейс тоже виральный).
+            ["share.card.clean"] =
+                "Прогнал сверку по магазину Uzum: накладные → продажи → возвраты → брак → остаток.\n" +
+                "Сошлось до штуки, потерь нет. Редкий случай, когда к складу вопросов не оказалось.",
+
+            // Эфемерная подсказка (отдельным сообщением, в карточку НЕ входит).
+            ["share.hint"] =
+                "Это сообщение можно просто переслать в чат селлеров — заголовок и кнопка сохранятся.",
+
+            // Ответ на приход по дип-линку ref_* (методика-first).
+            ["share.ref.intro"] =
+                "Это сверка по официальному Seller API Uzum (read-only ключ):\n" +
+                "принято по накладным → вывоз → продано → брак → остаток = потеряшки.\n" +
+                "Поле quantityMissing в API официально устарело и всегда 0 — поэтому считаем балансом.\n\n" +
+                "Могу прогнать такую же сверку по вашему магазину. Понадобится API-ключ " +
+                "(только чтение, шифруется, сообщение с ключом удаляется сразу).",
+            ["share.ref.howToKey"] = "🔑 Как получить ключ",
+            ["share.ref.connect"] = "▶️ Подключить магазин",
+            ["share.ref.howToKeyStub"] =
+                "Ключ создаётся в личном кабинете Uzum: раздел с API-ключами, права «Только чтение». " +
+                "Подробный гайд добавим отдельно. А пока — нажмите «Подключить магазин» и пришлите ключ.",
+
+            // Админ-статистика воронки шеринга.
+            ["share.stats"] =
+                "📈 Воронка шеринга за {0} дн.:\n" +
+                "тапов «Поделиться»: {1} (уникальных: {2})\n" +
+                "приходов по ссылке: {3}\n" +
+                "из них подключили магазин: {4}",
         },
 
         // ==================== UZ (черновой перевод) ====================
@@ -334,6 +382,44 @@ public static class Loc
 
             // --- Bot: boshqa ---
             ["bot.unknown"] = "Buyruqni tushunmadim. Boshlash — /start.",
+
+            // ============ Sharing (viral V1, qoralama) ============
+            ["share.button"] = "🤝 Natija bilan bo'lishish",
+            ["share.calc.button"] = "Bu qanday hisoblangan",
+            ["share.card.title"] = "Foydam'dan yuborilgan",
+
+            // Kartochka «yo'qotish topildi». {0}=defectFragment, {1}=defectQty ichida, {2}=sumMax.
+            ["share.card.loss"] =
+                "Uzum do'konim bo'yicha solishtirdim: nakladnoylar → sotuvlar → qaytarishlar → brak → qoldiq.\n" +
+                "Mos kelmadi: {0} dona ombor qabul qildi — keyin shunchaki yo'qoldi.{1}\n" +
+                "Kabinetda bu raqam umuman ko'rinmaydi. Sotuv narxlarida — {2} so'mgacha.\n" +
+                "Qabulda kam topshirsak jarima yozishadi (00001-kod, xarajatlarda), qabuldan keyin yo'qolsa — jimlik.",
+            ["share.card.lossDefect"] = " Yana {0} dona brak.",
+
+            ["share.card.clean"] =
+                "Uzum do'konim bo'yicha solishtirdim: nakladnoylar → sotuvlar → qaytarishlar → brak → qoldiq.\n" +
+                "Donagacha to'g'ri chiqdi, yo'qotish yo'q. Bu safar omborga savol yo'q ekan.",
+
+            ["share.hint"] =
+                "Bu xabarni shunchaki sellerlar chatiga yuborsangiz bo'ladi — sarlavha va tugma saqlanadi.",
+
+            ["share.ref.intro"] =
+                "Bu Uzum rasmiy Seller API bo'yicha solishtirish (read-only kalit):\n" +
+                "nakladnoy bo'yicha qabul → chiqarish → sotilgan → brak → qoldiq = yo'qotishlar.\n" +
+                "API'dagi quantityMissing maydoni rasman eskirgan va doim 0 — shu bois balans bilan hisoblaymiz.\n\n" +
+                "Sizning do'koningiz bo'yicha ham xuddi shunday solishtirishni o'tkaza olaman. " +
+                "API-kalit kerak bo'ladi (faqat o'qish, shifrlanadi, kalitli xabar darhol o'chiriladi).",
+            ["share.ref.howToKey"] = "🔑 Kalitni qanday olish",
+            ["share.ref.connect"] = "▶️ Do'konni ulash",
+            ["share.ref.howToKeyStub"] =
+                "Kalit Uzum shaxsiy kabinetida yaratiladi: API-kalitlar bo'limi, «Faqat o'qish» huquqi. " +
+                "Batafsil qo'llanmani alohida qo'shamiz. Hozircha — «Do'konni ulash»ni bosing va kalitni yuboring.",
+
+            ["share.stats"] =
+                "📈 Sharing voronkasi {0} kun:\n" +
+                "«Bo'lishish» taplari: {1} (noyob: {2})\n" +
+                "havola bo'yicha kelganlar: {3}\n" +
+                "ulardan do'kon ulaganlar: {4}",
         },
     };
 
