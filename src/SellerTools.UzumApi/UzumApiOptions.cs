@@ -67,4 +67,14 @@ public class UzumApiOptions
     /// переиспользуют свежее соединение, но не «залипают» на мёртвом).
     /// </summary>
     public int PooledConnectionLifetimeSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Общий таймаут одного HTTP-запроса (сек) — HttpClient.Timeout. Применяется на
+    /// КАЖДУЮ попытку (SendWithRetryAsync ретраит внутри), поэтому зависший ответ
+    /// Uzum не висит вечно, а падает по таймауту и уходит в ретрай. 0 = без лимита.
+    /// </summary>
+    public int RequestTimeoutSeconds { get; set; } = 100;
+
+    /// <summary>Таймаут установки TCP-соединения (сек). Раньше был хардкод 15.</summary>
+    public int ConnectTimeoutSeconds { get; set; } = 15;
 }

@@ -19,7 +19,14 @@ public static class ServiceCollectionExtensions
 
         if (mode == UzumApiMode.Real)
         {
-            services.AddHttpClient<IUzumApiClient, RealUzumApiClient>()
+            services.AddHttpClient<IUzumApiClient, RealUzumApiClient>((sp, http) =>
+                {
+                    var opt = sp.GetRequiredService<IOptions<UzumApiOptions>>().Value;
+                    // Общий таймаут запроса (на попытку; ретраи внутри клиента). 0 → без лимита.
+                    http.Timeout = opt.RequestTimeoutSeconds > 0
+                        ? TimeSpan.FromSeconds(opt.RequestTimeoutSeconds)
+                        : Timeout.InfiniteTimeSpan;
+                })
                 .ConfigurePrimaryHttpMessageHandler(sp =>
                 {
                     var opt = sp.GetRequiredService<IOptions<UzumApiOptions>>().Value;
@@ -30,7 +37,7 @@ public static class ServiceCollectionExtensions
                     {
                         PooledConnectionLifetime =
                             TimeSpan.FromSeconds(Math.Max(1, opt.PooledConnectionLifetimeSeconds)),
-                        ConnectTimeout = TimeSpan.FromSeconds(15),
+                        ConnectTimeout = TimeSpan.FromSeconds(Math.Max(1, opt.ConnectTimeoutSeconds)),
                     };
                 });
         }
