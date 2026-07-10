@@ -513,8 +513,8 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         }
         var shop = shops[0];
 
-        // Троттлинг по последнему синку (LastDeltaSyncAt из состояния).
-        var state = await db.ShopSyncStates
+        // Троттлинг по последнему синку (LastDeltaSyncAt из состояния). Только чтение.
+        var state = await db.ShopSyncStates.AsNoTracking()
             .FirstOrDefaultAsync(x => x.ShopId == shop.Id, ct);
         var last = state?.LastDeltaSyncAt ?? state?.LastFullSyncAt;
         if (last is { } l && DateTimeOffset.UtcNow - l < RefreshThrottle)

@@ -60,7 +60,9 @@ public class ReportCoordinator
     private async Task<ReportDecision> RequestAsync(
         long chatId, long shopId, string lang, DeliveryKind kind, bool loss, CancellationToken ct)
     {
-        var state = await _db.ShopSyncStates.FirstOrDefaultAsync(x => x.ShopId == shopId, ct);
+        // Только читаем состояние (решение never/stale/fresh) — без трекинга.
+        var state = await _db.ShopSyncStates.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.ShopId == shopId, ct);
 
         if (state?.Inactive == true)
             return ReportDecision.Inactive;

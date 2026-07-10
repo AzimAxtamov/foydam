@@ -121,11 +121,12 @@ public class LossReportService
     /// </summary>
     private async Task<DateTimeOffset?> GetDataAsOfAsync(long shopId, CancellationToken ct)
     {
-        var times = await _db.Skus
+        // MAX считаем в БД (не тянем все UpdatedAt в память). Проекция в nullable →
+        // MaxAsync на пустом наборе вернёт null, а не бросит (тождественно прежнему поведению).
+        return await _db.Skus
             .Where(x => x.ShopId == shopId)
-            .Select(x => x.UpdatedAt)
-            .ToListAsync(ct);
-        return times.Count == 0 ? null : times.Max();
+            .Select(x => (DateTimeOffset?)x.UpdatedAt)
+            .MaxAsync(ct);
     }
 
     /// <summary>
