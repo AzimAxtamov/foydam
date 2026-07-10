@@ -83,14 +83,15 @@ AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 {
     var ex = e.ExceptionObject as Exception;
     Log.Fatal(ex, "Необработанное исключение (AppDomain)");
+    // GetAwaiter().GetResult() здесь корректен: обработчик СИНХРОННЫЙ (нельзя await).
     try { alerts.AlertAsync(AlertKind.UnhandledError, $"AppDomain: {ex?.Message}").GetAwaiter().GetResult(); }
-    catch { /* алерт не должен падать */ }
+    catch (Exception alertEx) { Log.Warning(alertEx, "Не удалось отправить админ-алерт (AppDomain)"); }
 };
 TaskScheduler.UnobservedTaskException += (_, e) =>
 {
     Log.Error(e.Exception, "Необработанное исключение в задаче (UnobservedTaskException)");
     try { alerts.AlertAsync(AlertKind.UnhandledError, $"Task: {e.Exception.Message}").GetAwaiter().GetResult(); }
-    catch { /* игнор */ }
+    catch (Exception alertEx) { Log.Warning(alertEx, "Не удалось отправить админ-алерт (Task)"); }
     e.SetObserved();
 };
 
