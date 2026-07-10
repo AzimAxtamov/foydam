@@ -136,7 +136,9 @@ public class UzumSyncService
         }
         catch (Exception ex)
         {
-            return await FailAsync(state, ex.Message, ct, alert: true);
+            // Полный стек в лог (ex.Message терял место падения — на проде это скрывало NRE).
+            _log.LogError(ex, "Синк магазина {ShopId} упал с исключением", shop.Id);
+            return await FailAsync(state, $"{ex.GetType().Name}: {ex.Message}", ct, alert: true);
         }
     }
 

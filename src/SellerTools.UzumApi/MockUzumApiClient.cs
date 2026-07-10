@@ -220,9 +220,9 @@ public class MockUzumApiClient : IUzumApiClient
                 DateCreatedRaw = IsoDate(MockBaseDate),
                 DateAcceptedRaw = IsoDate(MockBaseDate.AddHours(6)),
                 InvoiceStatus = new InvoiceStatusDto { Value = "ACCEPTED" },
-                Products = new List<ProductForInvoiceDto>
+                ProductsRaw = new List<ProductForInvoiceDto>
                 {
-                    new() { ProductTitle = "Демо-поставка", Skus = acceptedSkus },
+                    new() { ProductTitle = "Демо-поставка", SkusRaw = acceptedSkus },
                 },
             },
             new()
@@ -231,12 +231,12 @@ public class MockUzumApiClient : IUzumApiClient
                 InvoiceNumber = 500002,
                 DateCreatedRaw = IsoDate(MockBaseDate.AddDays(-1)),
                 InvoiceStatus = new InvoiceStatusDto { Value = "CREATED" },
-                Products = new List<ProductForInvoiceDto>
+                ProductsRaw = new List<ProductForInvoiceDto>
                 {
                     new()
                     {
                         ProductTitle = "Черновик поставки",
-                        Skus = new List<SkuForInvoiceDto>
+                        SkusRaw = new List<SkuForInvoiceDto>
                         {
                             // Тот же SKU (полный код), но статус накладной CREATED —
                             // НЕ должно попасть в accepted. Проверяет фильтр по статусу.
@@ -279,7 +279,7 @@ public class MockUzumApiClient : IUzumApiClient
                 TotalPackedAmount = useAmount ? 0 : plan.Removed,
                 TotalAmount = plan.Removed,
                 AssembledDate = useAmount ? null : MockAssembledDate,
-                ReturnItems = new List<SellerReturnItemDto>
+                ReturnItemsRaw = new List<SellerReturnItemDto>
                 {
                     new()
                     {

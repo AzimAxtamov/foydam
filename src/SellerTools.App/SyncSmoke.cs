@@ -1,9 +1,11 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SellerTools.App.Data;
 using SellerTools.App.Services;
 using SellerTools.Core.Entities;
+using SellerTools.UzumApi.Dto;
 
 namespace SellerTools.App;
 
@@ -28,6 +30,14 @@ public static class SyncSmoke
         var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("syncsmoke");
 
         Console.WriteLine("== syncsmoke ==");
+
+        // Регрессия прод-бага: живой Uzum отдаёт "productForInvoiceDto": null,
+        // "returnItems": null и dateCreated в формате "22.08.2023" (dd.MM.yyyy).
+        // STJ затирал = new() → NullReferenceException в синке; InvariantCulture не
+        // парсил dd.MM.yyyy → лавина warning + null. Проверяем оба до синка.
+        AssertLiveDataShapes();
+
+
         // Baseline существующей (legacy, от EnsureCreated) БД перед Migrate — как в Program.cs.
         await MigrationBaseline.EnsureAsync(db, logger);
         await db.Database.MigrateAsync();
@@ -108,6 +118,37 @@ public static class SyncSmoke
             $"returns={await db.Returns.CountAsync()} " +
             $"returnItems={await db.ReturnItems.CountAsync()} " +
             $"skus={await db.Skus.CountAsync()}");
+    }
+
+    // Проверяет устойчивость DTO к реальным «грязным» формам Uzum (без БД и API).
+    private static void AssertLiveDataShapes()
+    {
+        Console.WriteLine("\n-- Проверка форм живых данных (регрессия прод-NRE) --");
+
+        // 1) invoice.dateCreated = "22.08.2023" (dd.MM.yyyy) → должен распарситься.
+        var inv = JsonSerializer.Deserialize<InvoiceDto>(
+            """{"id":331710,"invoiceStatus":{"value":"ACCEPTED"},"dateCreated":"22.08.2023","productForInvoiceDto":null}""")!;
+        Assert(inv.DateCreated != null, $"dateCreated '22.08.2023' должен распарситься, получено {inv.DateCreated?.ToString() ?? "null"}");
+        Assert(inv.DateCreated!.Value.Year == 2023 && inv.DateCreated.Value.Month == 8 && inv.DateCreated.Value.Day == 22,
+            $"22.08.2023 → 2023-08-22, получено {inv.DateCreated:yyyy-MM-dd}");
+
+        // 2) "productForInvoiceDto": null → Products НЕ null (иначе foreach = NRE).
+        Assert(inv.Products != null && inv.Products.Count == 0, "Products при JSON null → пустой список, не null");
+
+        // 3) "returnItems": null → ReturnItems НЕ null.
+        var ret = JsonSerializer.Deserialize<SellerReturnDto>(
+            """{"id":600001,"returnItems":null,"totalPackedAmount":0}""")!;
+        Assert(ret.ReturnItems != null && ret.ReturnItems.Count == 0, "ReturnItems при JSON null → пустой список, не null");
+
+        // 4) Массив накладных с null-полями обходится без NRE (как в синке).
+        var invoices = JsonSerializer.Deserialize<List<InvoiceDto>>(
+            """[{"id":1,"productForInvoiceDto":null},{"id":2,"invoiceStatus":null,"productForInvoiceDto":[{"skuForInvoiceDtoList":null}]}]""")!;
+        var totalSkus = 0;
+        foreach (var i in invoices)
+            foreach (var p in i.Products)
+                foreach (var s in p.Skus)
+                    totalSkus += s.QuantityAccepted;
+        Assert(totalSkus == 0, "обход накладных с null-коллекциями не падает NRE");
     }
 
     private static void Assert(bool cond, string msg)

@@ -56,6 +56,16 @@ public static class FlexibleDate
             var s = e.GetString();
             if (string.IsNullOrWhiteSpace(s))
                 return null;
+            s = s.Trim();
+
+            // ⚠️ [ЖИВОЙ КЛЮЧ] invoice.dateCreated приходит как "22.08.2023" (dd.MM.yyyy) —
+            // спека обещала string без формата, реальность = день.месяц.год. InvariantCulture
+            // в TryParse ждёт MM/dd/yyyy и такое НЕ парсит → лавина warning + null. Поэтому
+            // сначала пробуем известные явные форматы Uzum, только потом общий разбор.
+            if (DateTimeOffset.TryParseExact(
+                    s, ExplicitFormats, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal, out var exact))
+                return exact;
 
             if (DateTimeOffset.TryParse(
                     s, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var dto))
@@ -70,6 +80,16 @@ public static class FlexibleDate
 
         return null; // непарсибельно — вызывающий пусть логирует
     }
+
+    // Явные форматы дат Uzum (подтверждено живым ключом: invoice.dateCreated = dd.MM.yyyy).
+    // Держим набор с временем и без — на случай, если поле придёт с часами/минутами.
+    private static readonly string[] ExplicitFormats =
+    {
+        "dd.MM.yyyy",
+        "dd.MM.yyyy HH:mm:ss",
+        "dd.MM.yyyy HH:mm",
+        "yyyy-MM-dd",
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -119,8 +139,12 @@ public class InvoiceDto
     public int? TotalToStockRaw { get; set; }
     [JsonIgnore] public int TotalToStock => TotalToStockRaw ?? 0;
 
+    // ⚠️ [ЖИВОЙ КЛЮЧ] STJ при JSON "productForInvoiceDto": null ЗАТИРАЕТ инициализатор
+    // = new() и ставит null → foreach в синке падал NullReferenceException (мок такого
+    // не давал). Backing-поле nullable, наружу — всегда не-null список.
     [JsonPropertyName("productForInvoiceDto")]
-    public List<ProductForInvoiceDto> Products { get; set; } = new();
+    public List<ProductForInvoiceDto>? ProductsRaw { get; set; }
+    [JsonIgnore] public List<ProductForInvoiceDto> Products => ProductsRaw ??= new();
 
     /// <summary>Нормализованное значение статуса в верхнем регистре (для сравнения).</summary>
     [JsonIgnore]
@@ -154,8 +178,10 @@ public class ProductForInvoiceDto
     [JsonPropertyName("productTitle")]
     public string? ProductTitle { get; set; }
 
+    // Null-safe: STJ при JSON null затирает = new() → null. Наружу всегда список.
     [JsonPropertyName("skuForInvoiceDtoList")]
-    public List<SkuForInvoiceDto> Skus { get; set; } = new();
+    public List<SkuForInvoiceDto>? SkusRaw { get; set; }
+    [JsonIgnore] public List<SkuForInvoiceDto> Skus => SkusRaw ??= new();
 }
 
 public class SkuForInvoiceDto
@@ -231,8 +257,10 @@ public class SellerReturnDto
     [JsonPropertyName("totalAmount")]
     public int TotalAmount { get; set; }
 
+    // Null-safe: STJ при JSON null затирает = new() → null. Наружу всегда список.
     [JsonPropertyName("returnItems")]
-    public List<SellerReturnItemDto> ReturnItems { get; set; } = new();
+    public List<SellerReturnItemDto>? ReturnItemsRaw { get; set; }
+    [JsonIgnore] public List<SellerReturnItemDto> ReturnItems => ReturnItemsRaw ??= new();
 
     /// <summary>
     /// Legacy-правило вывоза: если по родительскому возврату totalPackedAmount==0
