@@ -163,20 +163,14 @@ public class MockUzumApiClient : IUzumApiClient
     //
     // dateCreated проставляем УБЫВАЮЩИМ (новые сверху) — как отдаёт живой API; на этом
     // порядке дельта-синк проверяет page0/page1-guard (восходящий порядок → ошибка).
-    public Task<IReadOnlyList<InvoiceDto>> GetAllInvoicesAsync(
-        long shopId, string apiKey, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<InvoiceDto>>(BuildAllInvoices());
-
-    public Task<IReadOnlyList<SellerReturnDto>> GetAllReturnsAsync(
-        long shopId, string apiKey, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<SellerReturnDto>>(BuildAllReturns());
-
     public Task<ApiPage<InvoiceDto>> GetInvoicesPageAsync(
-        long shopId, string apiKey, int page, int size = 50, CancellationToken ct = default)
+        long shopId, string apiKey, int page,
+        int size = UzumConstants.InvoiceReturnPageSize, CancellationToken ct = default)
         => Task.FromResult(Paginate(BuildAllInvoices(), page, size));
 
     public Task<ApiPage<SellerReturnDto>> GetReturnsPageAsync(
-        long shopId, string apiKey, int page, int size = 50, CancellationToken ct = default)
+        long shopId, string apiKey, int page,
+        int size = UzumConstants.InvoiceReturnPageSize, CancellationToken ct = default)
         => Task.FromResult(Paginate(BuildAllReturns(), page, size));
 
     private static ApiPage<T> Paginate<T>(IReadOnlyList<T> all, int page, int size)

@@ -37,26 +37,6 @@ public interface IUzumApiClient
         CancellationToken ct = default);
 
     /// <summary>
-    /// Все накладные поставки FBO (GET /v1/invoice, обходит все страницы, size=50).
-    /// Для балансовой реконсиляции потерь: accepted = quantityAccepted по
-    /// накладным ACCEPTED. Голый JSON-массив, пагинация до неполной страницы.
-    /// </summary>
-    Task<IReadOnlyList<InvoiceDto>> GetAllInvoicesAsync(
-        long shopId,
-        string apiKey,
-        CancellationToken ct = default);
-
-    /// <summary>
-    /// Все возвраты продавца (GET /v1/return, обходит все страницы, size=50).
-    /// Для реконсиляции: removed (физический вывоз со склада) по legacy-правилу.
-    /// Голый JSON-массив, пагинация до неполной страницы.
-    /// </summary>
-    Task<IReadOnlyList<SellerReturnDto>> GetAllReturnsAsync(
-        long shopId,
-        string apiKey,
-        CancellationToken ct = default);
-
-    /// <summary>
     /// Одна страница накладных (GET /v1/invoice) + rate-limit заголовки. Для синка:
     /// дельта управляет пагинацией сама (идёт с page=0 до точки останова).
     /// size по спеке максимум 50.

@@ -102,20 +102,14 @@ public class RealUzumApiClient : IUzumApiClient
         };
     }
 
-    public Task<IReadOnlyList<InvoiceDto>> GetAllInvoicesAsync(
-        long shopId, string apiKey, CancellationToken ct = default)
-        => GetAllPagesAsync<InvoiceDto>("/v1/invoice", apiKey, ct);
-
-    public Task<IReadOnlyList<SellerReturnDto>> GetAllReturnsAsync(
-        long shopId, string apiKey, CancellationToken ct = default)
-        => GetAllPagesAsync<SellerReturnDto>("/v1/return", apiKey, ct);
-
     public Task<ApiPage<InvoiceDto>> GetInvoicesPageAsync(
-        long shopId, string apiKey, int page, int size = 50, CancellationToken ct = default)
+        long shopId, string apiKey, int page,
+        int size = UzumConstants.InvoiceReturnPageSize, CancellationToken ct = default)
         => GetPageAsync<InvoiceDto>("/v1/invoice", apiKey, page, size, ct);
 
     public Task<ApiPage<SellerReturnDto>> GetReturnsPageAsync(
-        long shopId, string apiKey, int page, int size = 50, CancellationToken ct = default)
+        long shopId, string apiKey, int page,
+        int size = UzumConstants.InvoiceReturnPageSize, CancellationToken ct = default)
         => GetPageAsync<SellerReturnDto>("/v1/return", apiKey, page, size, ct);
 
     // Одна страница ручки с ГОЛЫМ JSON-массивом (/v1/invoice, /v1/return) + rate-limit
@@ -132,28 +126,6 @@ public class RealUzumApiClient : IUzumApiClient
             IsLast = batch.Count < size,
             RateLimitHeaders = ExtractRateLimitHeaders(resp),
         };
-    }
-
-    // Обход постранично ручек, отдающих ГОЛЫЙ JSON-массив (не envelope): /v1/invoice,
-    // /v1/return. size=50 (максимум по спеке), page с 0, идём до неполной страницы.
-    // По totalElements НЕ ориентируемся — у этих ручек его нет.
-    private async Task<IReadOnlyList<T>> GetAllPagesAsync<T>(
-        string path, string apiKey, CancellationToken ct)
-    {
-        const int size = UzumConstants.InvoiceReturnPageSize;
-        var all = new List<T>();
-        var page = 0;
-
-        while (true)
-        {
-            var pg = await GetPageAsync<T>(path, apiKey, page, size, ct);
-            all.AddRange(pg.Items);
-            if (pg.IsLast)
-                break;
-            page++;
-        }
-
-        return all;
     }
 
     public async Task<ProbeResult> ProbeAsync(
