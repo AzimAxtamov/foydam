@@ -205,9 +205,45 @@ namespace SellerTools.App.Data.Migrations
                         .HasMaxLength(2)
                         .HasColumnType("character varying(2)");
 
+                    b.Property<string>("RefCode")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<long?>("ReferredBySellerId")
+                        .HasColumnType("bigint");
+
                     b.HasKey("Id");
 
+                    b.HasIndex("RefCode")
+                        .IsUnique()
+                        .HasFilter("\"RefCode\" IS NOT NULL");
+
+                    b.HasIndex("ReferredBySellerId");
+
                     b.ToTable("Sellers");
+                });
+
+            modelBuilder.Entity("SellerTools.Core.Entities.ShareEvent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("SellerId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("SellerId");
+
+                    b.ToTable("ShareEvents");
                 });
 
             modelBuilder.Entity("SellerTools.Core.Entities.Shop", b =>
@@ -433,6 +469,14 @@ namespace SellerTools.App.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Return");
+                });
+
+            modelBuilder.Entity("SellerTools.Core.Entities.Seller", b =>
+                {
+                    b.HasOne("SellerTools.Core.Entities.Seller", null)
+                        .WithMany()
+                        .HasForeignKey("ReferredBySellerId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("SellerTools.Core.Entities.Shop", b =>

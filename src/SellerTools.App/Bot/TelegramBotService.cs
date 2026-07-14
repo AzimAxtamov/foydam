@@ -26,6 +26,7 @@ namespace SellerTools.App.Bot;
 public class TelegramBotService : IHostedService, IUpdateHandler
 {
     private readonly BotOptions _options;
+    private readonly long _adminChatId;
     private readonly IServiceScopeFactory _scopes;
     private readonly ConversationStore _store;
     private readonly IAdminAlertService _alerts;
@@ -40,12 +41,14 @@ public class TelegramBotService : IHostedService, IUpdateHandler
     public TelegramBotService(
         IOptions<BotOptions> options,
         IOptions<SyncOptions> sync,
+        IOptions<AdminOptions> admin,
         IServiceScopeFactory scopes,
         ConversationStore store,
         IAdminAlertService alerts,
         ILogger<TelegramBotService> log)
     {
         _options = options.Value;
+        _adminChatId = admin.Value.ChatId;
         _scopes = scopes;
         _store = store;
         _alerts = alerts;
@@ -133,10 +136,19 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         var chatId = msg.Chat.Id;
         var state = _store.Get(userId);
 
-        // /start в любой момент сбрасывает диалог.
+        // Админ-статистика воронки шеринга (только для Admin:ChatId).
+        if (text.StartsWith("/stats_share", StringComparison.OrdinalIgnoreCase))
+        {
+            await OnShareStatsAsync(bot, chatId, ct);
+            return;
+        }
+
+        // /start [payload] в любой момент сбрасывает диалог. payload=ref_<code> — приход
+        // по реферальной ссылке (first touch фиксируем ДО остального диалога).
         if (text.StartsWith("/start", StringComparison.OrdinalIgnoreCase))
         {
-            await StartDialogAsync(bot, chatId, userId, ct);
+            var payload = ParseStartPayload(text);
+            await StartDialogAsync(bot, chatId, userId, payload, ct);
             return;
         }
 
@@ -183,10 +195,22 @@ public class TelegramBotService : IHostedService, IUpdateHandler
     }
 
     private async Task StartDialogAsync(
-        ITelegramBotClient bot, long chatId, long userId, CancellationToken ct)
+        ITelegramBotClient bot, long chatId, long userId, string? startPayload, CancellationToken ct)
     {
         var state = _store.Get(userId);
         state.Step = DialogStep.ChoosingLanguage;
+        state.PendingRefIntro = false;
+
+        // Приход по реферальной ссылке: ref_<code>. Фиксируем реферера (first touch)
+        // и запоминаем, что после выбора языка нужно показать методику-first ответ.
+        if (TryExtractRefCode(startPayload, out var refCode))
+        {
+            state.PendingRefIntro = true;
+            using var scope = _scopes.CreateScope();
+            var referrals = scope.ServiceProvider.GetRequiredService<ReferralService>();
+            // Битый/неизвестный/self-ref код внутри просто не запишет реферера — /start не ломается.
+            await referrals.TryRecordReferralAsync(userId, refCode, ct);
+        }
 
         // Инлайн-кнопки выбора языка.
         var kb = new InlineKeyboardMarkup(new[]
@@ -200,6 +224,32 @@ public class TelegramBotService : IHostedService, IUpdateHandler
 
         await bot.SendMessage(chatId, Loc.T("bot.chooseLanguage", state.Language),
             replyMarkup: kb, cancellationToken: ct);
+    }
+
+    /// <summary>Полезная нагрузка из <c>/start &lt;payload&gt;</c> (после первого пробела), либо null.</summary>
+    private static string? ParseStartPayload(string text)
+    {
+        var space = text.IndexOf(' ');
+        if (space < 0) return null;
+        var payload = text[(space + 1)..].Trim();
+        return payload.Length == 0 ? null : payload;
+    }
+
+    /// <summary>
+    /// Извлекает реф-код из payload <c>ref_&lt;code&gt;</c>. Валидирует общий формат payload
+    /// (Telegram допускает <c>[A-Za-z0-9_-]{1,64}</c>). Не-ref payload → false.
+    /// </summary>
+    private static bool TryExtractRefCode(string? payload, out string refCode)
+    {
+        refCode = "";
+        if (string.IsNullOrEmpty(payload)) return false;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(payload, "^[A-Za-z0-9_-]{1,64}$")) return false;
+        const string prefix = "ref_";
+        if (!payload.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        var code = payload[prefix.Length..];
+        if (code.Length == 0) return false;
+        refCode = code;
+        return true;
     }
 
     private async Task OnCallbackAsync(
@@ -224,6 +274,16 @@ public class TelegramBotService : IHostedService, IUpdateHandler
 
             await bot.AnswerCallbackQuery(cq.Id, cancellationToken: ct);
             await bot.SendMessage(chatId, Loc.T("bot.langSet", lang), cancellationToken: ct);
+
+            // Приход по рефералке — методика-first ответ с кнопками (мягкое предложение),
+            // а не сразу просьба ключа. Ключ пойдёт после «Подключить магазин».
+            if (state.PendingRefIntro)
+            {
+                state.PendingRefIntro = false;
+                await SendRefIntroAsync(bot, chatId, lang, ct);
+                return;
+            }
+
             await bot.SendMessage(chatId, Loc.T("bot.welcome", lang), cancellationToken: ct);
 
             // Сразу просим ключ — shopId узнаем сами через /v1/shops.
@@ -236,7 +296,83 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         {
             await bot.AnswerCallbackQuery(cq.Id, cancellationToken: ct);
             await OnShopChosenAsync(bot, chatId, userId, data["shop:".Length..], state, ct);
+            return;
         }
+
+        if (data == "share:report")
+        {
+            // Идемпотентно закрываем «часики», затем шлём карточку + подсказку.
+            await bot.AnswerCallbackQuery(cq.Id, cancellationToken: ct);
+            await OnShareAsync(bot, chatId, userId, state.Language, ct);
+            return;
+        }
+
+        if (data == "ref:key")
+        {
+            await bot.AnswerCallbackQuery(cq.Id, cancellationToken: ct);
+            await bot.SendMessage(chatId, Loc.T("share.ref.howToKeyStub", state.Language),
+                cancellationToken: ct);
+            return;
+        }
+
+        if (data == "ref:connect")
+        {
+            // «Подключить магазин» → обычный слой онбординга: просим ключ.
+            await bot.AnswerCallbackQuery(cq.Id, cancellationToken: ct);
+            state.Step = DialogStep.AwaitingKey;
+            await bot.SendMessage(chatId, Loc.T("bot.askKey", state.Language), cancellationToken: ct);
+        }
+    }
+
+    /// <summary>Методика-first ответ на приход по рефералке + кнопки «как ключ» / «подключить».</summary>
+    private static async Task SendRefIntroAsync(
+        ITelegramBotClient bot, long chatId, string lang, CancellationToken ct)
+    {
+        var kb = new InlineKeyboardMarkup(new[]
+        {
+            new[] { InlineKeyboardButton.WithCallbackData(Loc.T("share.ref.howToKey", lang), "ref:key") },
+            new[] { InlineKeyboardButton.WithCallbackData(Loc.T("share.ref.connect", lang), "ref:connect") },
+        });
+        await bot.SendMessage(chatId, Loc.T("share.ref.intro", lang),
+            replyMarkup: kb, cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// Тап «Поделиться результатом»: логируем событие, лениво создаём реф-код, строим
+    /// share-карточку (отчёт из БД) и шлём её + эфемерную подсказку про пересылку.
+    /// </summary>
+    private async Task OnShareAsync(
+        ITelegramBotClient bot, long chatId, long userId, string lang, CancellationToken ct)
+    {
+        using var scope = _scopes.CreateScope();
+        var sellers = scope.ServiceProvider.GetRequiredService<SellerService>();
+        var referrals = scope.ServiceProvider.GetRequiredService<ReferralService>();
+        var reportSvc = scope.ServiceProvider.GetRequiredService<LossReportService>();
+
+        var shops = await sellers.GetShopsAsync(userId, ct);
+        if (shops.Count == 0)
+        {
+            await bot.SendMessage(chatId, Loc.T("bot.report.noShopYet", lang), cancellationToken: ct);
+            return;
+        }
+
+        // Каждый тап — строка в share_events (повторные тапы = новые строки, это ок).
+        await referrals.LogShareAsync(userId, ct);
+
+        var refCode = await referrals.GetOrCreateRefCodeAsync(userId, ct);
+        var deepLink = $"https://t.me/{_options.Username}?start=ref_{refCode}";
+
+        // Карточка строится по тому же отчёту из БД, что видел селлер (агрегация по всем
+        // магазинам не нужна — модель «один магазин на селлера», берём первый).
+        var report = await reportSvc.BuildAsync(shops[0], ct);
+        var card = ShareCardBuilder.Build(report, lang, deepLink);
+
+        await bot.SendMessage(chatId, card.Text,
+            parseMode: ParseMode.Html, replyMarkup: card.Markup,
+            linkPreviewOptions: new LinkPreviewOptions { IsDisabled = true }, cancellationToken: ct);
+
+        // Подсказка — отдельным сообщением (в форвард НЕ входит).
+        await bot.SendMessage(chatId, Loc.T("share.hint", lang), cancellationToken: ct);
     }
 
     private async Task OnKeyAsync(
@@ -372,6 +508,10 @@ public class TelegramBotService : IHostedService, IUpdateHandler
             ResizeKeyboard = true,
         };
 
+    /// <summary>Инлайн-кнопка «Поделиться результатом» под отчётом (callback share:report).</summary>
+    private static InlineKeyboardMarkup ShareButton(string lang) =>
+        new(InlineKeyboardButton.WithCallbackData(Loc.T("share.button", lang), "share:report"));
+
     /// <summary>Совпадает ли текст с кнопкой меню (на любом из языков).</summary>
     private static bool IsMenu(string text, string key, string lang) =>
         text == Loc.T(key, lang) || text == Loc.T(key, "ru") || text == Loc.T(key, "uz");
@@ -401,8 +541,10 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         {
             case ReportDecision.Ready:
                 var report = await reportSvc.BuildAsync(shop, ct);
+                // Инлайн-кнопка «Поделиться» на самом отчёте. Reply-меню внизу остаётся
+                // от прежних сообщений (одно сообщение не несёт reply+inline одновременно).
                 await bot.SendMessage(chatId, BotReportRenderer.Render(report, lang),
-                    parseMode: ParseMode.Markdown, replyMarkup: MainMenu(lang), cancellationToken: ct);
+                    parseMode: ParseMode.Markdown, replyMarkup: ShareButton(lang), cancellationToken: ct);
                 break;
             case ReportDecision.FirstSync:
                 await bot.SendMessage(chatId, Loc.T("bot.report.firstSync", lang),
@@ -532,6 +674,26 @@ public class TelegramBotService : IHostedService, IUpdateHandler
         jobs.Enqueue<Jobs.UzumSyncJob>(j => j.SyncShopAsync(shop.Id, CancellationToken.None));
         await bot.SendMessage(chatId, Loc.T("bot.refresh.queued", lang),
             replyMarkup: MainMenu(lang), cancellationToken: ct);
+    }
+
+    /// <summary>Админ-команда: числа воронки шеринга за 7 и 30 дней. Только для Admin:ChatId.</summary>
+    private async Task OnShareStatsAsync(ITelegramBotClient bot, long chatId, CancellationToken ct)
+    {
+        // Тихо игнорируем для всех, кроме админа (команда не для селлеров).
+        if (_adminChatId == 0 || chatId != _adminChatId)
+            return;
+
+        using var scope = _scopes.CreateScope();
+        var referrals = scope.ServiceProvider.GetRequiredService<ReferralService>();
+
+        foreach (var days in new[] { 7, 30 })
+        {
+            var s = await referrals.GetShareStatsAsync(days, ct);
+            await bot.SendMessage(chatId, string.Format(
+                Loc.T("share.stats", "ru"),
+                s.Days, s.ShareTaps, s.Sharers, s.ReferredArrivals, s.ReferredActivated),
+                cancellationToken: ct);
+        }
     }
 
     // Время в тайм-зоне Ташкента, формат ЧЧ:ММ дд.мм.гггг.

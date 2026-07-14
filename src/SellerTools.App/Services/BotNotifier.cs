@@ -4,6 +4,7 @@ using SellerTools.App.Configuration;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
+using Telegram.Bot.Types.ReplyMarkups;
 
 namespace SellerTools.App.Services;
 
@@ -15,6 +16,9 @@ namespace SellerTools.App.Services;
 public interface IBotNotifier
 {
     Task SendTextAsync(long chatId, string text, bool markdown = false, CancellationToken ct = default);
+    /// <summary>Текст с инлайн-клавиатурой (напр. кнопка «Поделиться» под отчётом из фона).</summary>
+    Task SendTextAsync(
+        long chatId, string text, InlineKeyboardMarkup? markup, bool markdown = false, CancellationToken ct = default);
     Task SendDocumentAsync(
         long chatId, string fileName, byte[] bytes, string? caption, CancellationToken ct = default);
     bool Enabled { get; }
@@ -35,14 +39,19 @@ public class BotNotifier : IBotNotifier
 
     public bool Enabled => _bot is not null;
 
-    public async Task SendTextAsync(
+    public Task SendTextAsync(
         long chatId, string text, bool markdown = false, CancellationToken ct = default)
+        => SendTextAsync(chatId, text, markup: null, markdown, ct);
+
+    public async Task SendTextAsync(
+        long chatId, string text, InlineKeyboardMarkup? markup, bool markdown = false, CancellationToken ct = default)
     {
         if (_bot is null) return;
         try
         {
             await _bot.SendMessage(chatId, text,
-                parseMode: markdown ? ParseMode.Markdown : ParseMode.None, cancellationToken: ct);
+                parseMode: markdown ? ParseMode.Markdown : ParseMode.None,
+                replyMarkup: markup, cancellationToken: ct);
         }
         catch (Exception ex)
         {

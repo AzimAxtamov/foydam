@@ -25,6 +25,12 @@ public class ConversationState
 
     /// <summary>Магазины, доступные ключу (id → имя), для шага выбора.</summary>
     public Dictionary<long, string?> DiscoveredShops { get; set; } = new();
+
+    /// <summary>
+    /// Пользователь пришёл по дип-линку <c>ref_*</c>: после выбора языка показываем
+    /// методику-first ответ (share.ref.intro) с кнопками, а не сразу просим ключ.
+    /// </summary>
+    public bool PendingRefIntro { get; set; }
 }
 
 /// <summary>
